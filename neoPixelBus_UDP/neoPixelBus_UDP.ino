@@ -9,21 +9,28 @@
 #define PIXELS_PER_STRIP 512
 // This needs to be evenly divisible by PIXLES_PER_STRIP. 
 // This represents how large our packets are that we send from our software source.
-#define CHUNK_SIZE 128
+#define CHUNK_SIZE 490
 // Dynamically limit brightness in terms of amperage.
-#define AMPS 12
+#define AMPS 4
 
-// Define some network variables here.
+ 
 #define UDP_PORT 2390
+#define UDP_PORT_OUT 2391
+
+
+// NETWORK_HOME
 IPAddress local_ip(192, 168, 1, 90);
 IPAddress gateway(192, 168, 1, 254);
 IPAddress subnet(255, 255, 255, 0);
-char ssid[] = "SSID_Name";  //  your network SSID (name)
-char pass[] = "Password";       // your network password
+char ssid[] = "ssid";  //  your network SSID (name)
+char pass[] = "passworwd";       // your network password
+
+
 
 // If this is set to 1, a lot of debug data will print to the console. 
 // Will cause horrible stuttering meant for single frame by frame tests and such.
 #define DEBUG_MODE 0
+#define PACKETDROP_DEBUG_MODE 0
 
 
 //#define pixelPin D4  // make sure to set this to the correct pin, ignored for UartDriven branch
@@ -38,6 +45,8 @@ byte r;
 byte g;
 byte b;
 
+byte action;
+
 // used later for holding values - used to dynamically limit brightness by amperage.
 RgbColor prevColor;
 int milliAmpsLimit = AMPS * 1000;
@@ -46,6 +55,10 @@ byte millisMultiplier = 0;
 
 // A UDP instance to let us send and receive packets over UDP
 WiFiUDP udp;
+
+// Reply buffer, for now hardcoded but this might encompass useful data like dropped packets etc.
+byte ReplyBuffer[] = {0,0,0,0,0,0,0,0,0,0}; 
+byte counterHolder = 0;
 
 void setup() {
 
@@ -101,10 +114,8 @@ void loop() {
     // read the packet into packetBufffer
     udp.read(packetBuffer, UDP_PACKET_SIZE);
 
-    // get the action byte
-    const byte action = packetBuffer[0];
+    action = packetBuffer[0];
 
-    
     if(DEBUG_MODE){ // If Debug mode is on print some stuff
       Serial.println("---Incoming---");
       Serial.print("Packet Size: ");
@@ -113,25 +124,11 @@ void loop() {
       Serial.println(action);
     }
 
-    
-    // if action byte is anything but 0 (this means we're receiving some portion of our rgb pixel data..)
     if(action != 0)
-    {
+    { // if action byte is anything but 0 (this means we're receiving some portion of our rgb pixel data..)
+      
       // Figure out what our starting offset is.
       const uint16_t initialOffset = CHUNK_SIZE * (action-1);
-      /*
-      remainder = 0
-
-      if(PIXELS_PER_STRIP-initialOffset < CHUNK_SIZE) 
-      {
-        remainder = PIXELS_PER_STRIP-initialOffset;
-      }
-      else
-      {
-        remainder = CHUNK_SIZE;
-      }
-      Serial.println(remainder);
-      */
 
       if(DEBUG_MODE){ // If Debug mode is on print some stuff
         Serial.print("---------: ");
@@ -161,12 +158,21 @@ void loop() {
       if(DEBUG_MODE){ // If Debug mode is on print some stuff
         Serial.println("Finished For Loop!");
       }
+
+      // if we're debugging packet drops, modify reply buffer.
+      if(PACKETDROP_DEBUG_MODE){
+        ReplyBuffer[action] = 1;
+      }
       
+      if(packetSize != UDP_PACKET_SIZE) 
+      { // if our packet was not full, it means it was also a terminating update packet.
+        action = 0;
+      }
     }
 
     // If we received an action byte of 0... this is telling us we received all the data we need
     // for this frame and we should update the actual rgb vals to the strip!
-    else
+    if(action == 0)
     {
 
       // this math gets our sum total of r/g/b vals down to milliamps (~60mA per pixel)
@@ -181,6 +187,7 @@ void loop() {
         Serial.println( millisMultiplier );
       }
 
+      
       // We already applied our r/g/b values to the strip, but we haven't updated it yet.
       // Sicne we needed the sum total of r/g/b values to calculate brightness, we 
       // can loop through all the values again now that we have the right numbers
@@ -190,12 +197,36 @@ void loop() {
         prevColor.Darken(millisMultiplier);
         strip.SetPixelColor(i,prevColor);
       }
+      
       strip.Show();   // write all the pixels out
       milliAmpsCounter = 0; // reset the milliAmpsCounter for the next frame.
 
       if(DEBUG_MODE){ // If Debug mode is on print some stuff
         Serial.println("Finished updating Leds!");
       }
+
+      // Send reply to sender, basically a ping that says hey we just updated leds.
+      //Serial.print("IP: ");
+      //Serial.println(udp.remoteIP());
+      //Serial.print("Port: ");
+      //Serial.println(udp.remotePort());
+
+      // if we're debugging packet drops, modify reply buffer.
+      if(PACKETDROP_DEBUG_MODE){
+        // set the last byte of the reply buffer to 2, indiciating that the frame was sent to leds.
+        ReplyBuffer[sizeof(ReplyBuffer)-1] = 2;
+        ReplyBuffer[0] = counterHolder;
+        counterHolder += 1;
+        // write out the response packet back to sender!
+        udp.beginPacket(udp.remoteIP(), UDP_PORT_OUT);
+        // clear the response buffer string.
+        for (byte i = 0; i < sizeof(ReplyBuffer); i++) {
+          udp.write(ReplyBuffer[i]);
+          ReplyBuffer[i] = 0;
+        }
+        udp.endPacket();
+      }
+      
     }
 
   if(DEBUG_MODE){ // If Debug mode is on print some stuff
