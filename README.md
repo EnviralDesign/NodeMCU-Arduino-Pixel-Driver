@@ -1,19 +1,39 @@
 # NodeMCU-Arduino-Pixel-Driver
-
 This code base is still largely a WIP - will update this section as things come together more.
 
----
 
-Working Example:
 
-2 x 512 pixel demo @ 60 fps
+# SETUP AND INSTALLATION:
+
+1) Register on [Derivative.ca]
+2) [Download the installer] for 088 x64 build  :62160
+3) Open Touch Designer, and perform the 1 time activation / login:
+![alt tag](http://www.enviral-design.com/downloads/loginToTouch.jpg)
+4) Open and run **nodeMCU_softwareTestingPlatform.toe**
+
+
+# Up to date R&D Q/A
+
+- https://docs.google.com/document/d/15fohtsI8zHB3XPj2QLFtR6nHrb2y4t7B38Z7AyHkmPo/edit?usp=sharing
+
+
+# Working Examples
+
+- 2 x 512 pixel demo @ 60 fps
 https://www.youtube.com/watch?v=c9nZ8aAHsXQ
 
-1 x 512 pixel battery powered demo @ 60 fps
+- 1 x 512 pixel battery powered demo @ 60 fps
 https://www.youtube.com/watch?v=akc9gpH_Zqw
 
-With a more powerful router recently purchased, I was able to more or less stream to the 8 nodeMCU's I had at 60 fps but ran into some other problems:
 
-- certain nodeMCU's freezing, seems to be related to something I've changed recently, or perhaps number of devices? I'm getting reset code #4 over serial, and this is only happening on battery powered tests.
-- [SOLVED] flickering on certain led panels : required a level shifter for the data line due to slightly lower voltage coming from 5v batteries than PSU's
 
+
+
+
+
+
+
+
+
+[Derivative.ca]: <http://www.derivative.ca/Login/RegisterForm.asp>
+[Download the installer]: https://www.derivative.ca/088/Downloads/
