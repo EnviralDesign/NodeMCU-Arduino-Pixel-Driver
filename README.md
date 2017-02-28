@@ -7,7 +7,7 @@ This code base is still largely a WIP - will update this section as things come 
 2. [Download the installer] for 088 x64 build  :62160
 3. Open Touch Designer, and perform the 1 time activation / login:
 ![alt tag](http://www.enviral-design.com/downloads/loginToTouch.jpg)
-4. Open and run **nodeMCU_softwareTestingPlatform.toe**
+4. Open and run **nodeMCU_softwareTestingPlatform.1.toe**
 
 
 ### Up to date R&D Q/A

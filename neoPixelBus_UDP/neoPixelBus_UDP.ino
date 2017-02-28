@@ -7,10 +7,12 @@
 // I have not tried more than 512 succesfully at 60 fps
 // but I get glitching and stuttering and not sure where the bottleneck is exactly.
 // at 30 fps I can go past this number succesfully though.
-#define PIXELS_PER_STRIP 8 //MDB
+#define PIXELS_PER_STRIP 512 //MDB
+
 // This needs to be evenly divisible by PIXLES_PER_STRIP.
-// This represents how large our packets are that we send from our software source.
-#define CHUNK_SIZE 490
+// This represents how large our packets are that we send from our software source IN TERMS OF LEDS.
+#define CHUNK_SIZE 128
+
 // Dynamically limit brightness in terms of amperage.
 #define AMPS 4
 
@@ -20,11 +22,11 @@
 
 
 // NETWORK_HOME
-IPAddress local_ip(192, 168, 1, 90);//MDB
-IPAddress gateway(192, 168, 1, 1); //MDB
+IPAddress local_ip(10, 10, 10, 201);//MDB
+IPAddress gateway(10, 10, 10, 254); //MDB
 IPAddress subnet(255, 255, 255, 0);
-char ssid[] = "SSID";  //  your network SSID (name) MDB
-char pass[] = "PASSWORD";       // your network password MDB
+char ssid[] = "bill_wi_the_science_fi_24";  //  your network SSID (name) MDB
+char pass[] = "8177937134";       // your network password MDB
 
 
 
@@ -165,9 +167,9 @@ void loop() {
     udp.read(packetBuffer, UDP_PACKET_SIZE);
 
     action = packetBuffer[0];
-
-    if (action=1) framesMD[frameIndex].arrivedAt=micros();
-
+    
+    if (action==1) framesMD[frameIndex].arrivedAt=micros();
+    
     if (DEBUG_MODE) { // If Debug mode is on print some stuff
       Serial.println("---Incoming---");
       Serial.print("Packet Size: ");
@@ -176,12 +178,13 @@ void loop() {
       Serial.println(action);
     }
 
+    
     if (action != 0)
     { // if action byte is anything but 0 (this means we're receiving some portion of our rgb pixel data..)
 
       // Figure out what our starting offset is.
       const uint16_t initialOffset = CHUNK_SIZE * (action - 1);
-
+      
       if (DEBUG_MODE) { // If Debug mode is on print some stuff
         Serial.print("---------: ");
         Serial.print(CHUNK_SIZE);
@@ -259,6 +262,8 @@ void loop() {
 
       strip.Show();   // write all the pixels out
       milliAmpsCounter = 0; // reset the milliAmpsCounter for the next frame.
+
+      Serial.println("");  ////////////////////
 
       if (DEBUG_MODE) { // If Debug mode is on print some stuff
         Serial.println("Finished updating Leds!");
