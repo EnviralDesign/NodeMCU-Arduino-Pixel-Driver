@@ -22,7 +22,7 @@
 
 
 // NETWORK_HOME
-IPAddress local_ip(10, 10, 10, 201);//MDB
+IPAddress local_ip(10, 10, 10, 206);//MDB
 IPAddress gateway(10, 10, 10, 254); //MDB
 IPAddress subnet(255, 255, 255, 0);
 char ssid[] = "bill_wi_the_science_fi_24";  //  your network SSID (name) MDB
@@ -263,7 +263,7 @@ void loop() {
       strip.Show();   // write all the pixels out
       milliAmpsCounter = 0; // reset the milliAmpsCounter for the next frame.
 
-      Serial.println("");  ////////////////////
+      //Serial.println("");  ////////////////////
 
       if (DEBUG_MODE) { // If Debug mode is on print some stuff
         Serial.println("Finished updating Leds!");
