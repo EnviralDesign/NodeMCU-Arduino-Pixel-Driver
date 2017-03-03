@@ -26,7 +26,7 @@ IPAddress local_ip(10, 10, 10, 206);//MDB
 IPAddress gateway(10, 10, 10, 254); //MDB
 IPAddress subnet(255, 255, 255, 0);
 char ssid[] = "bill_wi_the_science_fi_24";  //  your network SSID (name) MDB
-char pass[] = "8177937134";       // your network password MDB
+char pass[] = "pass";       // your network password MDB
 
 
 
