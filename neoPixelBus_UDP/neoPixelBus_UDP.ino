@@ -7,7 +7,7 @@
 // I have not tried more than 512 succesfully at 60 fps
 // but I get glitching and stuttering and not sure where the bottleneck is exactly.
 // at 30 fps I can go past this number succesfully though.
-#define PIXELS_PER_STRIP 512 //MDB
+#define PIXELS_PER_STRIP 512 
 
 // This needs to be evenly divisible by PIXLES_PER_STRIP.
 // This represents how large our packets are that we send from our software source IN TERMS OF LEDS.
@@ -22,11 +22,13 @@
 
 
 // NETWORK_HOME
-IPAddress local_ip(10, 10, 10, 206);//MDB
-IPAddress gateway(10, 10, 10, 254); //MDB
+IPAddress local_ip(10, 10, 10, 206);
+IPAddress gateway(10, 10, 10, 254);
+//IPAddress local_ip(192, 168, 1, 90);//MDB
+//IPAddress gateway(192, 168, 1, 1); //MDB
 IPAddress subnet(255, 255, 255, 0);
-char ssid[] = "bill_wi_the_science_fi_24";  //  your network SSID (name) MDB
-char pass[] = "pass";       // your network password MDB
+char ssid[] = "SSID";  //  your network SSID (name) MDB
+char pass[] = "PASSWORD";       // your network password MDB
 
 
 
@@ -67,20 +69,23 @@ byte ReplyBuffer[] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 byte counterHolder = 0;
 
 //last number of frames to monitor monitoring //MDB
-int const framesToMonitor = 600; //monitor last 10 seconds
+int const framesToMonitor = 300; //monitor last 5 seconds
+int frameNumber=0;
+int frameLimit=6000;
+int frameIndex= 0;
+int oldestFrameIndex=0;
+byte part=0;
 
 struct framesMetaData {
-          long frame;
-         // int parts;
+          unsigned int frame;
+          byte part;
           long arrivedAt;
+          int packetSize;
           int power; 
           int adjustedPower; 
-          int processingTime;} framesMD[framesToMonitor];
+          long processingTime;} framesMD[framesToMonitor];
 
-static int frameNumber=0;
-static int frameLimit=6000;
-static int frameIndex= 0;
-static int oldestFrameIndex=0;
+
 
 long blankTime;
 long processingTime;
@@ -133,42 +138,57 @@ void setup() {
 
   // here we place all the different web services definition
   server.on("/getstatus", HTTP_GET, []() {
-    server.send(200, "text/plain", "Connected to:"+String(ssid)+"\r\nFrame blanking time:"+String(blankTime)+"us\r\nFrames:"+String(frameNumber));
+    server.send(200, "text/plain", "Connected to:"+String(ssid)+"\r\nIP address:"+String(local_ip[0]) + "." + String(local_ip[1]) + "." + String(local_ip[2]) + "." + 
+        String(local_ip[3])+"\r\nport:"+String(UDP_PORT)+"\r\nExpected packet size:"+String(UDP_PACKET_SIZE));
   });
 
   server.on("/getframes", HTTP_GET, []() {
-    String r="Frame   Arrived At Power   X   CPU utilization\r\n";
-    r+=      "    #         [us]  [ma]      [us]\r\n";
+    String r="Frame #   Arrived At Packet  Power   X  CPU utilization [µS]\r\n";
+    r+=      "                [µS]  Size    [mA]      Pckt   Frame\r\n";
     //r+=String(oldestFrameIndex)+"-"+String(frameIndex)+"-"+String(framesToMonitor)+" - "+String(frameNumber)+"\r\n";
+    int acum=0;
     for(int i=0 ; i<framesToMonitor ; i++) {
-      if(framesMD[i].frame!=0) 
-        r+=formatN(framesMD[i].frame,5)+" "+formatN(framesMD[i].arrivedAt,12)+" "+formatN(framesMD[i].power,5)+" "+formatN(framesMD[i].adjustedPower,3)+" "+formatN(framesMD[i].processingTime,5)+"\r\n";
-    }
+       if(framesMD[i].frame!=0) {
+        r += formatN(framesMD[i].frame,5)+"-"+formatN(framesMD[i].part,1)+" "+formatN(framesMD[i].arrivedAt,12)+"   "+formatN( framesMD[i].packetSize,4)+"  "+
+             formatN(framesMD[i].power,5)+" "+formatN(framesMD[i].adjustedPower,3)+" "+formatN(framesMD[i].processingTime,5);
+        if(framesMD[i].part==1) acum = framesMD[i].processingTime;
+        if(framesMD[i].part>1)  acum += framesMD[i].processingTime;
+        if(framesMD[i].part==0)  {
+          r+=("  "+formatN(acum+framesMD[i].processingTime,6));
+          acum=0;} 
+       
+       };
+       r+="\r\n";
+      }
     server.send(200, "text/plain", r);
   });
 
   // Start the server //MDB
   server.begin();
 
+  //pinMode(BUILTIN_LED, OUTPUT);
+  //digitalWrite(BUILTIN_LED,LOW);
+
 }
 
 
 void loop() {
-
   // if there's data available, read a packet
+ // digitalWrite(BUILTIN_LED,LOW);
   int packetSize = udp.parsePacket();
   if (packetSize > 0)
   {
     //take initial time //MDB
     arrivedAt=micros();
-    frameIndex=frameNumber % framesToMonitor ;
-        
+    //frameIndex=frameNumber % framesToMonitor ; //MDBx
+   
     // read the packet into packetBufffer
     udp.read(packetBuffer, UDP_PACKET_SIZE);
 
     action = packetBuffer[0];
     
-    if (action==1) framesMD[frameIndex].arrivedAt=micros();
+    //if (action==1) framesMD[frameIndex].arrivedAt=micros(); //MDBx
+  
     
     if (DEBUG_MODE) { // If Debug mode is on print some stuff
       Serial.println("---Incoming---");
@@ -181,7 +201,10 @@ void loop() {
     
     if (action != 0)
     { // if action byte is anything but 0 (this means we're receiving some portion of our rgb pixel data..)
-
+      framesMD[frameIndex].frame=frameNumber;
+      framesMD[frameIndex].part=action;
+      framesMD[frameIndex].arrivedAt=arrivedAt;
+      
       // Figure out what our starting offset is.
       const uint16_t initialOffset = CHUNK_SIZE * (action - 1);
       
@@ -223,15 +246,26 @@ void loop() {
       { // if our packet was not full, it means it was also a terminating update packet.
         action = 0;
       }
+      framesMD[frameIndex].packetSize=packetSize;
+      framesMD[frameIndex].power=0;
+      framesMD[frameIndex].adjustedPower=0;
+      framesMD[frameIndex].processingTime=micros()-framesMD[frameIndex].arrivedAt;
+      frameIndex=(frameIndex +1) % framesToMonitor;
+      packetSize=0; // implicit frame 0 will have packetSize == 0  MDBx
+      arrivedAt=micros();
     }
 
     // If we received an action byte of 0... this is telling us we received all the data we need
     // for this frame and we should update the actual rgb vals to the strip!
-    framesMD[frameIndex].frame=frameNumber+1;
-    framesMD[frameIndex].power=milliAmpsCounter;
+    //framesMD[frameIndex].frame=frameNumber+1;  //MDBx
     
     if (action == 0)
     {
+      framesMD[frameIndex].frame=frameNumber;
+      framesMD[frameIndex].part=action;
+      framesMD[frameIndex].arrivedAt=arrivedAt;
+
+      pinMode(BUILTIN_LED, OUTPUT);
 
       // this math gets our sum total of r/g/b vals down to milliamps (~60mA per pixel)
       milliAmpsCounter /= 13;
@@ -282,15 +316,16 @@ void loop() {
         ReplyBuffer[0] = counterHolder;
         counterHolder += 1;
         // write out the response packet back to sender!
-//        udp.beginPacket(udp.remoteIP(), UDP_PORT_OUT);
+        udp.beginPacket(udp.remoteIP(), UDP_PORT_OUT);
         // clear the response buffer string.
         for (byte i = 0; i < sizeof(ReplyBuffer); i++) {
-//          udp.write(ReplyBuffer[i]);
+          udp.write(ReplyBuffer[i]);
           ReplyBuffer[i] = 0;
         }
-//        udp.endPacket();
+        udp.endPacket();
       }
 
+      pinMode(BUILTIN_LED, INPUT);
     }
 
     
@@ -301,8 +336,12 @@ void loop() {
     }
 
     //measure total frame processing time
-    framesMD[frameIndex].processingTime=micros()-framesMD[frameIndex].arrivedAt;
-    if(frameIndex=oldestFrameIndex) oldestFrameIndex=(oldestFrameIndex+1) % framesToMonitor;
+      framesMD[frameIndex].processingTime=micros()-framesMD[frameIndex].arrivedAt;
+      frameIndex=(frameIndex+1) % framesToMonitor;
+
+    
+    //framesMD[frameIndex].processingTime=micros()-framesMD[frameIndex].arrivedAt;
+    if(frameIndex==oldestFrameIndex) oldestFrameIndex=(oldestFrameIndex+1) % framesToMonitor;
     frameNumber=(frameNumber+1) % frameLimit;
     
   }
