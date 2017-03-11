@@ -2,16 +2,18 @@
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h> //MDB
 #include <WiFiUdp.h>
-#include <NeoPixelBus.h>
+
+//#include <NeoPixelBus.h>
+#include <NeoPixelBrightnessBus.h> // instead of NeoPixelBus.h
 
 // I have not tried more than 512 succesfully at 60 fps
 // but I get glitching and stuttering and not sure where the bottleneck is exactly.
 // at 30 fps I can go past this number succesfully though.
-#define PIXELS_PER_STRIP 150 
+#define PIXELS_PER_STRIP 512 
 
 // This needs to be evenly divisible by PIXLES_PER_STRIP.
 // This represents how large our packets are that we send from our software source IN TERMS OF LEDS.
-#define CHUNK_SIZE 50
+#define CHUNK_SIZE 171
 
 // Dynamically limit brightness in terms of amperage.
 #define AMPS 4
@@ -22,7 +24,7 @@
 
 
 // NETWORK_HOME
-IPAddress local_ip(10, 10, 10, 209);
+IPAddress local_ip(10, 10, 10, 202);
 IPAddress gateway(10, 10, 10, 254);
 //IPAddress local_ip(192, 168, 1, 90);//MDB
 //IPAddress gateway(192, 168, 1, 1); //MDB
@@ -40,7 +42,9 @@ char pass[] = "pass";       // your network password MDB
 
 //#define pixelPin D4  // make sure to set this to the correct pin, ignored for UartDriven branch
 const uint8_t PixelPin = 2;
-NeoPixelBus<NeoGrbFeature, NeoEsp8266Dma800KbpsMethod> strip(PIXELS_PER_STRIP, PixelPin);
+//NeoPixelBus<NeoGrbFeature, NeoEsp8266Dma800KbpsMethod> strip(PIXELS_PER_STRIP, PixelPin);
+NeoPixelBrightnessBus<NeoGrbFeature, NeoEsp8266Dma800KbpsMethod> strip(PIXELS_PER_STRIP, PixelPin);
+NeoGamma<NeoGammaTableMethod> colorGamma;
 
 // holds chunksize x 3(chans per led) + 1 "action" byte
 #define UDP_PACKET_SIZE ((CHUNK_SIZE*3)+1)
@@ -228,7 +232,8 @@ void loop() {
         g = packetBuffer[i * 3 + 2];
         b = packetBuffer[i * 3 + 3];
 
-        strip.SetPixelColor(i + initialOffset, RgbColor(r, g, b));
+        //strip.SetPixelColor(i + initialOffset, RgbColor(r, g, b)); // this line does not use gamma correction
+        strip.SetPixelColor(i + initialOffset, colorGamma.Correct(RgbColor(r, g, b))); // this line uses gamma correction
 
         milliAmpsCounter += (r + g + b); // increment our milliamps counter accordingly for use later.
       }
@@ -273,7 +278,7 @@ void loop() {
 
       // because the Darken function uses a value from 0-255 this next line maths it into the right range and type.
       millisMultiplier = 255 - (byte)( constrain( ((float)milliAmpsLimit / (float)milliAmpsCounter), 0, 1 ) * 256);
-
+      millisMultiplier = map(millisMultiplier, 0, 255, 255, 0); // inverse the multiplier to work with new brightness control method
       // Collect data  MDB
       framesMD[frameIndex].adjustedPower=millisMultiplier;
 
@@ -288,12 +293,13 @@ void loop() {
       // Sicne we needed the sum total of r/g/b values to calculate brightness, we
       // can loop through all the values again now that we have the right numbers
       // and scale brightness if we need to.
-      for (int i = 0; i < PIXELS_PER_STRIP; i++) {
-        prevColor = strip.GetPixelColor(i);
-        prevColor.Darken(millisMultiplier);
-        strip.SetPixelColor(i, prevColor);
-      }
-
+      
+      //for (int i = 0; i < PIXELS_PER_STRIP; i++) {
+      //  prevColor = strip.GetPixelColor(i);
+      //  prevColor.Darken(millisMultiplier);
+      //  strip.SetPixelColor(i, prevColor);
+      //}
+      strip.SetBrightness(millisMultiplier); // this new brightness control method was added to lib recently, affects entire strip at once.
       strip.Show();   // write all the pixels out
       milliAmpsCounter = 0; // reset the milliAmpsCounter for the next frame.
 
