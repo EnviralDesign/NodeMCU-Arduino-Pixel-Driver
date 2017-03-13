@@ -13,7 +13,8 @@
 
 // This needs to be evenly divisible by PIXLES_PER_STRIP.
 // This represents how large our packets are that we send from our software source IN TERMS OF LEDS.
-#define CHUNK_SIZE 171
+#define CHUNK_SIZE 50
+#define MAX_ACTION_BYTE 4  //maximum numbers of chunks per frame in order to validate we do not receive a wrong index when there are communciation errors
 
 // Dynamically limit brightness in terms of amperage.
 #define AMPS 4
@@ -29,9 +30,8 @@ IPAddress gateway(10, 10, 10, 254);
 //IPAddress local_ip(192, 168, 1, 90);//MDB
 //IPAddress gateway(192, 168, 1, 1); //MDB
 IPAddress subnet(255, 255, 255, 0);
-char ssid[] = "bill_wi_the_science_fi_24";  //  your network SSID (name) MDB
-char pass[] = "pass";       // your network password MDB
-
+char ssid[] = "bill_wi_the_science_fi_24";  //  your network SSID (name)
+char pass[] = "pass";       // your network password 
 
 
 // If this is set to 1, a lot of debug data will print to the console.
@@ -142,8 +142,27 @@ void setup() {
 
   // here we place all the different web services definition
   server.on("/getstatus", HTTP_GET, []() {
-    server.send(200, "text/plain", "Connected to:"+String(ssid)+"\r\nIP address:"+String(local_ip[0]) + "." + String(local_ip[1]) + "." + String(local_ip[2]) + "." + 
-        String(local_ip[3])+"\r\nport:"+String(UDP_PORT)+"\r\nExpected packet size:"+String(UDP_PACKET_SIZE));
+    // build Javascript code to draw SVG wifi graph
+    String r="<html><body>";
+    r+="Connected to:"+String(ssid)+"<br>IP address:"+String(local_ip[0]) + "." + String(local_ip[1]) + "." + String(local_ip[2]) + "." + String(local_ip[3]);
+    r+="<br>port:"+String(UDP_PORT)+"<br>Expected packet size:"+String(UDP_PACKET_SIZE);
+    r+="<br><h2>WiFi monitoring</h2><svg id='svg' width='800' height='800'></svg><script type='text/javascript'>";
+    r+="var svgns = 'http://www.w3.org/2000/svg';var svg = document.getElementById('svg');";
+    r+="var color=0,colors = ['red','orange','blue','green','purple','cyan','magenta','yellow'];";
+    r+="line(80,400,640,400,'','');for(i=-1;i<=13;i++) {label='Ch'+i;if (i<1 || i>11 ) label='';line(i*40+120,400,i*40+120,80,null,label);}";
+    r+="for(i=-90;i<=-20;i+=10) {label=''+i+'dBm';line(80,-i*4,640,-i*4,label,null);}";
+    r+=getSSIDs();
+    r+="function line(x1,y1,x2,y2,lleft,ldown) {var l=document.createElementNS(svgns,'line');l.setAttribute('stroke','black');";
+    r+="l.setAttribute('x1', x1);l.setAttribute('y1', y1);l.setAttribute('x2', x2);l.setAttribute('y2', y2);svg.appendChild(l);";
+    r+="var t=document.createElementNS(svgns,'text');t.textContent = ldown;t.setAttribute('x', x1-15);t.setAttribute('y', y1+20);svg.appendChild(t);";
+    r+="var t=document.createElementNS(svgns,'text');t.textContent = lleft;t.setAttribute('x', x1-60);t.setAttribute('y', y1+5); svg.appendChild(t);}";
+    r+="function channel(ch,db,ssid) {var p=document.createElementNS(svgns,'path');";
+    r+="p.setAttribute('d', 'M'+((ch-2)*40+120)+' 400 l60 '+(-400-db*4)+' l40 0 L'+((ch+2)*40+120)+' 400');";
+    r+="p.setAttribute('stroke',colors[color]);p.setAttribute('stroke-width',3);p.setAttribute('fill','none');svg.appendChild(p);";
+    r+="var t=document.createElementNS(svgns,'text');t.setAttribute('stroke',colors[color]);t.textContent = ssid;";
+    r+="t.setAttribute('x', ch*40-(ssid.length/2*8)+120);t.setAttribute('y', -db*4-5);svg.appendChild(t); color=color+1 % colors.length;}";  
+    r+="</script></body></html>";
+    server.send(200, "text/html", r);
   });
 
   server.on("/getframes", HTTP_GET, []() {
@@ -160,8 +179,7 @@ void setup() {
         if(framesMD[i].part==0)  {
           r+=("  "+formatN(acum+framesMD[i].processingTime,6));
           acum=0;} 
-       
-       };
+        };
        r+="\r\n";
       }
     server.send(200, "text/plain", r);
@@ -169,9 +187,6 @@ void setup() {
 
   // Start the server //MDB
   server.begin();
-
-  //pinMode(BUILTIN_LED, OUTPUT);
-  //digitalWrite(BUILTIN_LED,LOW);
 
 }
 
@@ -184,15 +199,13 @@ void loop() {
   {
     //take initial time //MDB
     arrivedAt=micros();
-    //frameIndex=frameNumber % framesToMonitor ; //MDBx
    
     // read the packet into packetBufffer
     udp.read(packetBuffer, UDP_PACKET_SIZE);
 
     action = packetBuffer[0];
-    
-    //if (action==1) framesMD[frameIndex].arrivedAt=micros(); //MDBx
-  
+   
+    //Serial.println(String(frameIndex)+":"+frameNumber+" - "+String(action)+" "+String(packetSize)+"/"+String(UDP_PACKET_SIZE)); 
     
     if (DEBUG_MODE) { // If Debug mode is on print some stuff
       Serial.println("---Incoming---");
@@ -201,10 +214,10 @@ void loop() {
       Serial.print("Action: ");
       Serial.println(action);
     }
-
     
     if (action != 0)
     { // if action byte is anything but 0 (this means we're receiving some portion of our rgb pixel data..)
+
       framesMD[frameIndex].frame=frameNumber;
       framesMD[frameIndex].part=action;
       framesMD[frameIndex].arrivedAt=arrivedAt;
@@ -226,16 +239,20 @@ void loop() {
 
       // loop through our recently received packet, and assign the corresponding
       // RGB values to their respective places in the strip.
-      for (uint16_t i = 0; i < CHUNK_SIZE; i++) {
 
-        r = packetBuffer[i * 3 + 1];
-        g = packetBuffer[i * 3 + 2];
-        b = packetBuffer[i * 3 + 3];
+      if(action<=MAX_ACTION_BYTE) { //check the ation byte is within limits
+        uint16_t led=0;
+        for (uint16_t i = 1; i < CHUNK_SIZE*3;) {
 
-        //strip.SetPixelColor(i + initialOffset, RgbColor(r, g, b)); // this line does not use gamma correction
-        strip.SetPixelColor(i + initialOffset, colorGamma.Correct(RgbColor(r, g, b))); // this line uses gamma correction
+          r = packetBuffer[i++];
+          g = packetBuffer[i++];
+          b = packetBuffer[i++];
 
-        milliAmpsCounter += (r + g + b); // increment our milliamps counter accordingly for use later.
+          //strip.SetPixelColor(i + initialOffset, RgbColor(r, g, b)); // this line does not use gamma correction
+          strip.SetPixelColor(initialOffset+led++, colorGamma.Correct(RgbColor(r, g, b))); // this line uses gamma correction
+
+          milliAmpsCounter += (r + g + b); // increment our milliamps counter accordingly for use later.
+        }
       }
 
       if (DEBUG_MODE) { // If Debug mode is on print some stuff
@@ -299,7 +316,9 @@ void loop() {
       //  prevColor.Darken(millisMultiplier);
       //  strip.SetPixelColor(i, prevColor);
       //}
-      strip.SetBrightness(millisMultiplier); // this new brightness control method was added to lib recently, affects entire strip at once.
+
+      if(millisMultiplier!=255)  //dim LEDs only if required
+        strip.SetBrightness(millisMultiplier); // this new brightness control method was added to lib recently, affects entire strip at once.
       strip.Show();   // write all the pixels out
       milliAmpsCounter = 0; // reset the milliAmpsCounter for the next frame.
 
@@ -331,24 +350,22 @@ void loop() {
         udp.endPacket();
       }
 
-      pinMode(BUILTIN_LED, INPUT);
-    }
+      //measure total frame processing time
+      framesMD[frameIndex].processingTime=micros()-framesMD[frameIndex].arrivedAt;
+      frameIndex=(frameIndex+1) % framesToMonitor;
 
     
+      //framesMD[frameIndex].processingTime=micros()-framesMD[frameIndex].arrivedAt;
+      if(frameIndex==oldestFrameIndex) oldestFrameIndex=(oldestFrameIndex+1) % framesToMonitor;
+      frameNumber=(frameNumber+1) % frameLimit;
+
+      pinMode(BUILTIN_LED, INPUT);
+    }
 
     if (DEBUG_MODE) { // If Debug mode is on print some stuff
       Serial.println("--end of packet and stuff--");
       Serial.println("");
     }
-
-    //measure total frame processing time
-      framesMD[frameIndex].processingTime=micros()-framesMD[frameIndex].arrivedAt;
-      frameIndex=(frameIndex+1) % framesToMonitor;
-
-    
-    //framesMD[frameIndex].processingTime=micros()-framesMD[frameIndex].arrivedAt;
-    if(frameIndex==oldestFrameIndex) oldestFrameIndex=(oldestFrameIndex+1) % framesToMonitor;
-    frameNumber=(frameNumber+1) % frameLimit;
     
   }
   //delay(0);
@@ -359,4 +376,12 @@ String formatN(long n, int p) {
   String ns="       "+String(n);
   return ns.substring(ns.length()-p);
 }
+
+String getSSIDs() { // build wifi information channel calls for JS code
+  String s="";
+  byte n;
+  n=WiFi.scanNetworks(false,true);
+  for(int i=0;i<n;i++)      s+="channel("+String(WiFi.channel(i))+","+String(WiFi.RSSI(i))+",'"+WiFi.SSID(i)+"');";
+  return s;
+};
 
