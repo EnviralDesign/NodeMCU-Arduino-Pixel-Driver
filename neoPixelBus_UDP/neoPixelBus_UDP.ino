@@ -30,8 +30,8 @@ IPAddress gateway(10, 10, 10, 254);
 //IPAddress local_ip(192, 168, 1, 90);//MDB
 //IPAddress gateway(192, 168, 1, 1); //MDB
 IPAddress subnet(255, 255, 255, 0);
-char ssid[] = "bill_wi_the_science_fi_24";  //  your network SSID (name)
-char pass[] = "pass";       // your network password 
+char ssid[] = "SSID";  //  your network SSID (name)
+char pass[] = "password";       // your network password 
 
 
 // If this is set to 1, a lot of debug data will print to the console.
@@ -73,7 +73,7 @@ byte ReplyBuffer[] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 byte counterHolder = 0;
 
 //last number of frames to monitor monitoring //MDB
-int const framesToMonitor = 300; //monitor last 5 seconds
+int const framesToMonitor = 120; //monitor last 2 seconds
 int frameNumber=0;
 int frameLimit=6000;
 int frameIndex= 0;
@@ -94,6 +94,8 @@ struct framesMetaData {
 long blankTime;
 long processingTime;
 long arrivedAt;
+
+String rt;
 
 void setup() {
 
@@ -140,36 +142,40 @@ void setup() {
   strip.Show();
   blankTime=micros()-blankTime;
 
+  for(int i=0 ; i<framesToMonitor ; i++)  //blank all frames metadata
+     framesMD[i].frame=0;
+
   // here we place all the different web services definition
   server.on("/getstatus", HTTP_GET, []() {
     // build Javascript code to draw SVG wifi graph
-    String r="<html><body>";
-    r+="Connected to:"+String(ssid)+"<br>IP address:"+String(local_ip[0]) + "." + String(local_ip[1]) + "." + String(local_ip[2]) + "." + String(local_ip[3]);
-    r+="<br>port:"+String(UDP_PORT)+"<br>Expected packet size:"+String(UDP_PACKET_SIZE);
-    r+="<br><h2>WiFi monitoring</h2><svg id='svg' width='800' height='800'></svg><script type='text/javascript'>";
-    r+="var svgns = 'http://www.w3.org/2000/svg';var svg = document.getElementById('svg');";
-    r+="var color=0,colors = ['red','orange','blue','green','purple','cyan','magenta','yellow'];";
-    r+="line(80,400,640,400,'','');for(i=-1;i<=13;i++) {label='Ch'+i;if (i<1 || i>11 ) label='';line(i*40+120,400,i*40+120,80,null,label);}";
-    r+="for(i=-90;i<=-20;i+=10) {label=''+i+'dBm';line(80,-i*4,640,-i*4,label,null);}";
-    r+=getSSIDs();
-    r+="function line(x1,y1,x2,y2,lleft,ldown) {var l=document.createElementNS(svgns,'line');l.setAttribute('stroke','black');";
-    r+="l.setAttribute('x1', x1);l.setAttribute('y1', y1);l.setAttribute('x2', x2);l.setAttribute('y2', y2);svg.appendChild(l);";
-    r+="var t=document.createElementNS(svgns,'text');t.textContent = ldown;t.setAttribute('x', x1-15);t.setAttribute('y', y1+20);svg.appendChild(t);";
-    r+="var t=document.createElementNS(svgns,'text');t.textContent = lleft;t.setAttribute('x', x1-60);t.setAttribute('y', y1+5); svg.appendChild(t);}";
-    r+="function channel(ch,db,ssid) {var p=document.createElementNS(svgns,'path');";
-    r+="p.setAttribute('d', 'M'+((ch-2)*40+120)+' 400 l60 '+(-400-db*4)+' l40 0 L'+((ch+2)*40+120)+' 400');";
-    r+="p.setAttribute('stroke',colors[color]);p.setAttribute('stroke-width',3);p.setAttribute('fill','none');svg.appendChild(p);";
-    r+="var t=document.createElementNS(svgns,'text');t.setAttribute('stroke',colors[color]);t.textContent = ssid;";
-    r+="t.setAttribute('x', ch*40-(ssid.length/2*8)+120);t.setAttribute('y', -db*4-5);svg.appendChild(t); color=color+1 % colors.length;}";  
-    r+="</script></body></html>";
-    server.send(200, "text/html", r);
+    rt="<!doctype html><html><body>";
+    rt+="Connected to:"+String(ssid)+"<br>IP address:"+String(local_ip[0]) + "." + String(local_ip[1]) + "." + String(local_ip[2]) + "." + String(local_ip[3]);
+    rt+="<br>port:"+String(UDP_PORT)+"<br>Expected packet size:"+String(UDP_PACKET_SIZE);
+    rt+="<br><h2>WiFi monitoring</h2><svg id='svg' width='800' height='800'></svg><script type='text/javascript'>";
+    rt+="var svgns = 'http://www.w3.org/2000/svg';var svg = document.getElementById('svg');";
+    rt+="var color=0,colors = ['red','orange','blue','green','purple','cyan','magenta','yellow'];";
+    rt+="line(80,400,640,400,'','');for(i=-1;i<=13;i++) {label='Ch'+i;if (i<1 || i>11 ) label='';line(i*40+120,400,i*40+120,80,null,label);}";
+    rt+="for(i=-90;i<=-20;i+=10) {label=''+i+'dBm';line(80,-i*4,640,-i*4,label,null);}";
+    rt+=getSSIDs();
+    rt+="function line(x1,y1,x2,y2,lleft,ldown) {var l=document.createElementNS(svgns,'line');l.setAttribute('stroke','black');";
+    rt+="l.setAttribute('x1', x1);l.setAttribute('y1', y1);l.setAttribute('x2', x2);l.setAttribute('y2', y2);svg.appendChild(l);";
+    rt+="var t=document.createElementNS(svgns,'text');t.textContent = ldown;t.setAttribute('x', x1-15);t.setAttribute('y', y1+20);svg.appendChild(t);";
+    rt+="var t=document.createElementNS(svgns,'text');t.textContent = lleft;t.setAttribute('x', x1-60);t.setAttribute('y', y1+5); svg.appendChild(t);}";
+    rt+="function channel(ch,db,ssid) {var p=document.createElementNS(svgns,'path');";
+    rt+="p.setAttribute('d', 'M'+((ch-2)*40+120)+' 400 l60 '+(-400-db*4)+' l40 0 L'+((ch+2)*40+120)+' 400');";
+    rt+="p.setAttribute('stroke',colors[color]);p.setAttribute('stroke-width',3);p.setAttribute('fill','none');svg.appendChild(p);";
+    rt+="var t=document.createElementNS(svgns,'text');t.setAttribute('stroke',colors[color]);t.textContent = ssid;";
+    rt+="t.setAttribute('x', ch*40-(ssid.length/2*8)+120);t.setAttribute('y', -db*4-5);svg.appendChild(t); color=(color+1) % colors.length;}";  
+    rt+="</script></body></html>";
+    server.send(200, "text/html", rt);
   });
 
-  server.on("/getframes", HTTP_GET, []() {
-    String r="Frame #   Arrived At Packet  Power   X  CPU utilization [µS]\r\n";
+  server.on("/getframesold", HTTP_GET, []() {
+    String r="<!DOCTYPE html>\r\n<html><body><p>";
+    r+="Frame #   Arrived At Packet  Power   X  CPU utilization [µS]\r\n";
     r+=      "                [µS]  Size    [mA]      Pckt   Frame\r\n";
     //r+=String(oldestFrameIndex)+"-"+String(frameIndex)+"-"+String(framesToMonitor)+" - "+String(frameNumber)+"\r\n";
-    int acum=0;
+    long acum=0;
     for(int i=0 ; i<framesToMonitor ; i++) {
        if(framesMD[i].frame!=0) {
         r += formatN(framesMD[i].frame,5)+"-"+formatN(framesMD[i].part,1)+" "+formatN(framesMD[i].arrivedAt,12)+"   "+formatN( framesMD[i].packetSize,4)+"  "+
@@ -182,13 +188,165 @@ void setup() {
         };
        r+="\r\n";
       }
-    server.send(200, "text/plain", r);
+    r+="</p></body></html>";
+    server.send(200, "text/html", r);
   });
+
+  server.on("/getframes", HTTP_GET, []() {
+    rt="<html><body><table>";
+    rt+="<tr style=\"border:1px solid black\"><th>Frame<br>#</th><th>Action<br>byte</td><th>Arrived At<br>[µS]</th><th>Packet Size<br>[bytes]</th><th>Power<br>[mA]</th><th>Power<br>Adjustment</th><th>Packet CPU<br>time [µS]</th><th>Frame CPU<br>time [µS]</th></tr>";
+    long acum=0;
+    long lastFrame=0;
+    boolean grey=false;
+    for(int i=0 ; i<framesToMonitor ; i++) {
+       if(framesMD[i].frame!=0) {
+        if (framesMD[i].frame!=lastFrame) {
+          grey=!grey;
+          lastFrame=framesMD[i].frame;
+        };
+        if(grey)
+          rt += "<tr align=\"center\" bgcolor=\"lightgrey\">";
+        else 
+          rt += "<tr align=\"center\">";
+        rt += "<td>"+String(framesMD[i].frame)+"</td>";
+        rt += "<td>"+String(framesMD[i].part)+"</td>";
+        rt += "<td>"+String(framesMD[i].arrivedAt)+"</td>"; 
+        rt += "<td>"+StringZ(framesMD[i].packetSize)+"</td>";
+        rt += "<td>"+StringZ(framesMD[i].power)+"</td>";
+        rt += "<td>"+StringZ(framesMD[i].adjustedPower)+"</td>";
+        rt += "<td>"+StringZ(framesMD[i].processingTime)+"</td>";
+        if(framesMD[i].part==1) acum = framesMD[i].processingTime;
+        if(framesMD[i].part>1)  acum = acum + framesMD[i].processingTime;
+        if(framesMD[i].part==0)  {
+          rt+="<td>"+String(acum+framesMD[i].processingTime)+"</td>";
+          acum=0;}
+         else
+          rt+="<td></td>";
+         rt+="</tr>";
+       };
+    };
+    rt+="</table></body></html>";
+    server.send(200, "text/html; charset=UTF-8", rt);
+  });
+
+  server.on("/play", HTTP_POST, []() {
+    // <effect> [RGB[r1],[g1],[b1]] [RGB[r],[g2],[b2]] [T<times>] [F<frames>]
+    // Executes "effect" with the specified parameters 
+    // Ej: blink rgb255,0,0 rgb0,0,0 t10 f10
+    // Blinks red / black for 10 times showing each color during 10 frames.
+    String play=server.arg("plain");
+    String line, command,params;
+    RgbColor rgb1,rgb2;
+    int times,frames;
+    String ret="";
+    int offset=0;
+    int pos;
+    while (offset<play.length()) {//scan through request body
+      line="";
+      while (offset<play.length() && byte(play[offset])!=10) {  // extract line
+        line+=play[offset++];
+      };
+      if(byte(play[offset])==10) offset++; // skip line feed
+
+      command=getCommand(line);
+      params=getParams(line);
+      rgb1=getRGB(params,1);
+      rgb2=getRGB(params,2);
+      times=getTimes(params);
+      frames=getFrames(params);
+
+      blinkEffect(rgb1,rgb2,frames, times);
+
+      ret+=command+":"+params+": R1:"+String(rgb1.R)+" G1:"+String(rgb1.G)+" B1:"+String(rgb1.B)+
+                               " R2:"+String(rgb2.R)+" G2:"+String(rgb2.G)+" B2:"+String(rgb2.B)+" Frames:"+String(frames)+" Times:"+String(times)+" <LF>";
+
+      
+    };   
+    
+    server.send(200,"text/plain", ret);
+    });
 
   // Start the server //MDB
   server.begin();
 
 }
+
+String getCommand(String line){
+  String ret=line.substring(0,line.indexOf(' '));
+  ret.toUpperCase();
+  return ret;
+};
+
+String getParams(String line) {
+  if(line.indexOf(' ')==-1) 
+    return "";
+  else {
+    String ret=line.substring(line.indexOf(' ')+1);
+    ret.toUpperCase();
+    return ret;
+  }; 
+};
+
+RgbColor getRGB(String params) {
+  return getRGB(params,1);
+}
+
+RgbColor getRGB(String params, int n) {
+  byte r=0;g=0;b=0;
+  int pos=0;
+  String colors;
+  for (int i=1;i<=n;i++) {
+    pos=params.indexOf('RGB',pos)+1;
+  }
+  if(pos>0) { //found RGB token at pos
+    colors=params.substring(pos,(params.substring(pos)+" ").indexOf(' ')+pos);//extract colors  values between RGB token and next space/LF
+    Serial.println(params+" -> "+String(n)+":"+String(pos)+" <"+colors+">");
+    r=constrain(colors.toInt(),0,255); // isolate red component
+    pos=colors.indexOf(',');
+    if (pos>=0) {
+      g=constrain(colors.substring(pos+1).toInt(),0,255); // isolate green component
+      pos=colors.indexOf(',',pos+1);
+      if (pos>=0) 
+        b=constrain(colors.substring(pos+1).toInt(),0,255); //isolate blue component
+    }
+  }
+  return RgbColor(r,g,b);
+};
+
+int getFrames(String params) {
+  int f=1;
+  int pos=params.indexOf("F");
+  if(pos>=0) 
+    f=abs(params.substring(pos+1).toInt());
+  return f;
+}
+
+int getTimes(String params) {
+  int t=1;
+  int pos=params.indexOf("T");
+  if(pos>=0)
+    t=abs(params.substring(pos+1).toInt());
+  return t;
+}
+
+void blinkEffect(RgbColor rgb1, RgbColor rgb2, int frames, int times) {
+  // Blink all leds showing each color during "frames" frames and for "times" times
+  unsigned long startTime;
+  for(int t=1;t<=times;t++) {
+    startTime=millis();
+    for (uint16_t i = 0; i < PIXELS_PER_STRIP; i++) 
+      strip.SetPixelColor(i, rgb1);
+    strip.Show();
+    delay(1000/60*frames-millis()+startTime);
+    startTime=millis();
+    for (uint16_t i = 0; i < PIXELS_PER_STRIP; i++) 
+      strip.SetPixelColor(i, rgb2);
+    strip.Show();
+    delay(1000/60*frames-millis()+startTime);
+  }
+}
+
+
 
 
 void loop() {
@@ -307,7 +465,7 @@ void loop() {
 
 
       // We already applied our r/g/b values to the strip, but we haven't updated it yet.
-      // Sicne we needed the sum total of r/g/b values to calculate brightness, we
+      // Since we needed the sum total of r/g/b values to calculate brightness, we
       // can loop through all the values again now that we have the right numbers
       // and scale brightness if we need to.
       
@@ -377,6 +535,13 @@ String formatN(long n, int p) {
   return ns.substring(ns.length()-p);
 }
 
+String StringZ(int n) {
+  if(n==0)
+    return "";
+  else
+    return String(n);
+}
+
 String getSSIDs() { // build wifi information channel calls for JS code
   String s="";
   byte n;
@@ -384,4 +549,5 @@ String getSSIDs() { // build wifi information channel calls for JS code
   for(int i=0;i<n;i++)      s+="channel("+String(WiFi.channel(i))+","+String(WiFi.RSSI(i))+",'"+WiFi.SSID(i)+"');";
   return s;
 };
+
 
