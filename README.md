@@ -17,16 +17,18 @@ This code base is still largely a WIP - will update this section as things come 
 
 ### SETUP AND INSTALLATION:
 
-1. Register on [Derivative.ca]
+1. To get Arduino IDE talking to the nodeMCU, follow the first step of this guide: [NodeMCU in Arduino IDE]
 
-2. [Download the installer] for 088 x64 build  :62160
+2. Register on [Derivative.ca]
 
-3. Open Touch Designer, and perform the 1 time activation / login:
+3. [Download the installer] for 088 x64 build  :62160
+
+4. Open Touch Designer, and perform the 1 time activation / login:
 
  ![alt tag](http://www.enviral-design.com/downloads/loginToTouch.jpg)
-4. Open and run **nodeMCU_softwareTestingPlatform.1.toe**
+5. Open and run **nodeMCU_softwareTestingPlatform.1.toe**
 
-5. This is the home screen you want to be at:
+6. This is the home screen you want to be at:
 
  ![alt tag](http://www.enviral-design.com/blog/wp-content/uploads/2017/05/nodeMCU_driverSoftware.jpg)
 
@@ -34,15 +36,15 @@ This code base is still largely a WIP - will update this section as things come 
 
  ![alt tag](http://www.enviral-design.com/blog/wp-content/uploads/2017/05/nodeMCU_driverSoftware_homeScreen.jpg)
 
-6. You can navigate to the **MAPPING** bookmark as well, to adjust the coordinates to match your leds:
+7. You can navigate to the **MAPPING** bookmark as well, to adjust the coordinates to match your leds:
 
  ![alt tag](http://www.enviral-design.com/blog/wp-content/uploads/2017/05/nodeMCU_driverSoftware_mappingScreen.jpg)
 
-7. Also in **CONTENT** you can swap out, load, or create your own content to push to the leds instead of the default ramp I have setup:
+8. Also in **CONTENT** you can swap out, load, or create your own content to push to the leds instead of the default ramp I have setup:
 
  ![alt tag](http://www.enviral-design.com/blog/wp-content/uploads/2017/05/nodeMCU_driverSoftware_animations.jpg)
 
-8. Lastly, if you're curious to see the python code being used to transmit data from touch designer to the nodeMCU's, check out **COMMUNICATION**:
+9. Lastly, if you're curious to see the python code being used to transmit data from touch designer to the nodeMCU's, check out **COMMUNICATION**:
 
  ![alt tag](http://www.enviral-design.com/blog/wp-content/uploads/2017/05/nodeMCU_driverSoftware_UDPOutcode.jpg)
 
@@ -73,3 +75,4 @@ https://youtu.be/c9nZ8aAHsXQ
 
 [Derivative.ca]: <http://www.derivative.ca/Login/RegisterForm.asp>
 [Download the installer]: https://www.derivative.ca/088/Downloads/
+[NodeMCU in Arduino IDE]: http://www.instructables.com/id/Quick-Start-to-Nodemcu-ESP8266-on-Arduino-IDE/
