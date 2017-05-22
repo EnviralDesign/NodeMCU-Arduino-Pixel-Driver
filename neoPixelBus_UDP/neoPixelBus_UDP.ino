@@ -9,11 +9,11 @@
 // I have not tried more than 512 succesfully at 60 fps
 // but I get glitching and stuttering and not sure where the bottleneck is exactly.
 // at 30 fps I can go past this number succesfully though.
-#define PIXELS_PER_STRIP 512 
+#define PIXELS_PER_STRIP 512
 
 // This needs to be evenly divisible by PIXLES_PER_STRIP.
 // This represents how large our packets are that we send from our software source IN TERMS OF LEDS.
-#define CHUNK_SIZE 50
+#define CHUNK_SIZE 171
 #define MAX_ACTION_BYTE 4  //maximum numbers of chunks per frame in order to validate we do not receive a wrong index when there are communciation errors
 
 // Dynamically limit brightness in terms of amperage.
@@ -25,13 +25,14 @@
 
 
 // NETWORK_HOME
-IPAddress local_ip(10, 10, 10, 202);
-IPAddress gateway(10, 10, 10, 254);
-//IPAddress local_ip(192, 168, 1, 90);//MDB
-//IPAddress gateway(192, 168, 1, 1); //MDB
+//IPAddress local_ip(10, 10, 10, 200); //LM
+//IPAddress gateway(10, 10, 10, 254); //LM
+IPAddress local_ip(192, 168, 1, 90);//MDB
+IPAddress gateway(192, 168, 1, 1); //MDB
 IPAddress subnet(255, 255, 255, 0);
-char ssid[] = "SSID";  //  your network SSID (name)
-char pass[] = "password";       // your network password 
+// char ssid[] = "bill_wi_the_science_fi_24";  // LM
+char ssid[] = "ssid";  // MDB
+char pass[] = "pass";       // your network password 
 
 
 // If this is set to 1, a lot of debug data will print to the console.
