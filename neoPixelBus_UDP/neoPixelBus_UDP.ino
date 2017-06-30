@@ -22,17 +22,18 @@
 
 #define UDP_PORT 2390
 #define UDP_PORT_OUT 2391
+#define STREAMING_TIMEOUT 10  //  blank streaming frame after X seconds
+
 
 
 // NETWORK_HOME
-//IPAddress local_ip(10, 10, 10, 200); //LM
-//IPAddress gateway(10, 10, 10, 254); //LM
-IPAddress local_ip(192, 168, 1, 90);//MDB
-IPAddress gateway(192, 168, 1, 1); //MDB
+IPAddress local_ip(10, 10, 10, 200);
+IPAddress gateway(10, 10, 10, 254); //LM
+//IPAddress gateway(192, 168, 1, 1); //MDB
 IPAddress subnet(255, 255, 255, 0);
-// char ssid[] = "bill_wi_the_science_fi_24";  // LM
-char ssid[] = "ssid";  // MDB
-char pass[] = "pass";       // your network password 
+
+char ssid[] = "ssid";   // your SSID
+char pass[] = "pwd";       // your network password 
 
 
 // If this is set to 1, a lot of debug data will print to the console.
@@ -95,8 +96,13 @@ struct framesMetaData {
 long blankTime;
 long processingTime;
 long arrivedAt;
+long lastStreamingFrame=0;
+
+volatile int postCount=0; // counter to identify new REST post to help abort playing of current effect, thus taking new effect POSTs immediately.
+
 
 String rt;
+
 
 void setup() {
 
@@ -105,9 +111,11 @@ void setup() {
   Serial.println();
   Serial.println();
 
+
   // We start by connecting to a WiFi network
   Serial.print("Connecting to ");
   Serial.println(ssid);
+  WiFi.mode(WIFI_STA);  // WIFi STATION mode only
   WiFi.begin(ssid, pass);
   WiFi.config(local_ip, gateway, subnet);
 
@@ -147,7 +155,7 @@ void setup() {
      framesMD[i].frame=0;
 
   // here we place all the different web services definition
-  server.on("/getstatus", HTTP_GET, []() {
+  server.on("/survey", HTTP_GET, []() {
     // build Javascript code to draw SVG wifi graph
     rt="<!doctype html><html><body>";
     rt+="Connected to:"+String(ssid)+"<br>IP address:"+String(local_ip[0]) + "." + String(local_ip[1]) + "." + String(local_ip[2]) + "." + String(local_ip[3]);
@@ -168,6 +176,15 @@ void setup() {
     rt+="var t=document.createElementNS(svgns,'text');t.setAttribute('stroke',colors[color]);t.textContent = ssid;";
     rt+="t.setAttribute('x', ch*40-(ssid.length/2*8)+120);t.setAttribute('y', -db*4-5);svg.appendChild(t); color=(color+1) % colors.length;}";  
     rt+="</script></body></html>";
+    server.send(200, "text/html", rt);
+  });
+
+  server.on("/getstatus", HTTP_GET, []() {
+    // build Javascript code to draw SVG wifi graph
+    rt="<!doctype html><html><body>";
+    rt+="Connected to:"+String(ssid)+"<br>IP address:"+String(local_ip[0]) + "." + String(local_ip[1]) + "." + String(local_ip[2]) + "." + String(local_ip[3]);
+    rt+="<br>port:"+String(UDP_PORT)+"<br>Expected packet size:"+String(UDP_PACKET_SIZE);
+    rt+="</body></html>";
     server.send(200, "text/html", rt);
   });
 
@@ -242,6 +259,7 @@ void setup() {
     String ret="";
     int offset=0;
     int pos;
+    Serial.println("POST request");
     while (offset<play.length()) {//scan through request body
       line="";
       while (offset<play.length() && byte(play[offset])!=10) {  // extract line
@@ -255,6 +273,7 @@ void setup() {
       rgb2=getRGB(params,2);
       times=getTimes(params);
       frames=getFrames(params);
+      postCount=(postCount++) % 10000;
 
       blinkEffect(rgb1,rgb2,frames, times);
 
@@ -270,6 +289,13 @@ void setup() {
   // Start the server //MDB
   server.begin();
 
+}
+
+void blankFrame() {
+  for (uint16_t i = 0; i < PIXELS_PER_STRIP; i++) {
+    strip.SetPixelColor(i, RgbColor(0, 0, 0));
+  };
+  strip.Show();
 }
 
 String getCommand(String line){
@@ -333,26 +359,42 @@ int getTimes(String params) {
 void blinkEffect(RgbColor rgb1, RgbColor rgb2, int frames, int times) {
   // Blink all leds showing each color during "frames" frames and for "times" times
   unsigned long startTime;
-  for(int t=1;t<=times;t++) {
-    startTime=millis();
+  int localPostCount=postCount;
+
+  for(int t=1;t<=times ;t++) {
+    //startTime=millis();
+    //Serial.println(startTime);
     for (uint16_t i = 0; i < PIXELS_PER_STRIP; i++) 
       strip.SetPixelColor(i, rgb1);
     strip.Show();
-    delay(1000/60*frames-millis()+startTime);
-    startTime=millis();
+    //delayTill(1000/60*frames+startTime,localPostCount);
+    delayFrames(frames);
+    //startTime=millis();
     for (uint16_t i = 0; i < PIXELS_PER_STRIP; i++) 
       strip.SetPixelColor(i, rgb2);
     strip.Show();
-    delay(1000/60*frames-millis()+startTime);
+    //delayTill(1000/60*frames+startTime,localPostCount);
+    delayFrames(frames);
   }
 }
 
 
 
+void delayFrames(int frames){
+  for(int i=1;i<=frames;i++) {
+    delay(16);
+    //delayMicroseconds(16600);
+  }
+}
 
 void loop() {
+  //Serial.print("-");
   // if there's data available, read a packet
  // digitalWrite(BUILTIN_LED,LOW);
+ if(lastStreamingFrame!=0 && millis()-lastStreamingFrame>STREAMING_TIMEOUT*1000) {
+  blankFrame();
+  lastStreamingFrame=0;
+ }
   int packetSize = udp.parsePacket();
   if (packetSize > 0)
   {
@@ -479,6 +521,7 @@ void loop() {
       if(millisMultiplier!=255)  //dim LEDs only if required
         strip.SetBrightness(millisMultiplier); // this new brightness control method was added to lib recently, affects entire strip at once.
       strip.Show();   // write all the pixels out
+      lastStreamingFrame=millis();
       milliAmpsCounter = 0; // reset the milliAmpsCounter for the next frame.
 
       //Serial.println("");  ////////////////////
