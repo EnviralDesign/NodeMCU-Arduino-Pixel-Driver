@@ -29,6 +29,7 @@
 // NETWORK_HOME
 IPAddress local_ip(10, 10, 10, 200);
 IPAddress gateway(10, 10, 10, 254); //LM
+//IPAddress local_ip(192,168,1,200); //MDB
 //IPAddress gateway(192, 168, 1, 1); //MDB
 IPAddress subnet(255, 255, 255, 0);
 
@@ -98,8 +99,17 @@ long processingTime;
 long arrivedAt;
 long lastStreamingFrame=0;
 
-volatile int postCount=0; // counter to identify new REST post to help abort playing of current effect, thus taking new effect POSTs immediately.
+volatile boolean streaming=true;
 
+// variables to keep status during effects play
+String play="";
+String command="";
+RgbColor rgb1=0;
+RgbColor rgb2=0;
+int times=1;
+int frames=1;
+int offset=0;
+volatile int frame=0;
 
 String rt;
 
@@ -188,28 +198,6 @@ void setup() {
     server.send(200, "text/html", rt);
   });
 
-  server.on("/getframesold", HTTP_GET, []() {
-    String r="<!DOCTYPE html>\r\n<html><body><p>";
-    r+="Frame #   Arrived At Packet  Power   X  CPU utilization [µS]\r\n";
-    r+=      "                [µS]  Size    [mA]      Pckt   Frame\r\n";
-    //r+=String(oldestFrameIndex)+"-"+String(frameIndex)+"-"+String(framesToMonitor)+" - "+String(frameNumber)+"\r\n";
-    long acum=0;
-    for(int i=0 ; i<framesToMonitor ; i++) {
-       if(framesMD[i].frame!=0) {
-        r += formatN(framesMD[i].frame,5)+"-"+formatN(framesMD[i].part,1)+" "+formatN(framesMD[i].arrivedAt,12)+"   "+formatN( framesMD[i].packetSize,4)+"  "+
-             formatN(framesMD[i].power,5)+" "+formatN(framesMD[i].adjustedPower,3)+" "+formatN(framesMD[i].processingTime,5);
-        if(framesMD[i].part==1) acum = framesMD[i].processingTime;
-        if(framesMD[i].part>1)  acum += framesMD[i].processingTime;
-        if(framesMD[i].part==0)  {
-          r+=("  "+formatN(acum+framesMD[i].processingTime,6));
-          acum=0;} 
-        };
-       r+="\r\n";
-      }
-    r+="</p></body></html>";
-    server.send(200, "text/html", r);
-  });
-
   server.on("/getframes", HTTP_GET, []() {
     rt="<html><body><table>";
     rt+="<tr style=\"border:1px solid black\"><th>Frame<br>#</th><th>Action<br>byte</td><th>Arrived At<br>[µS]</th><th>Packet Size<br>[bytes]</th><th>Power<br>[mA]</th><th>Power<br>Adjustment</th><th>Packet CPU<br>time [µS]</th><th>Frame CPU<br>time [µS]</th></tr>";
@@ -247,43 +235,18 @@ void setup() {
     server.send(200, "text/html; charset=UTF-8", rt);
   });
 
+
   server.on("/play", HTTP_POST, []() {
     // <effect> [RGB[r1],[g1],[b1]] [RGB[r],[g2],[b2]] [T<times>] [F<frames>]
     // Executes "effect" with the specified parameters 
     // Ej: blink rgb255,0,0 rgb0,0,0 t10 f10
     // Blinks red / black for 10 times showing each color during 10 frames.
-    String play=server.arg("plain");
-    String line, command,params;
-    RgbColor rgb1,rgb2;
-    int times,frames;
-    String ret="";
-    int offset=0;
-    int pos;
-    Serial.println("POST request");
-    while (offset<play.length()) {//scan through request body
-      line="";
-      while (offset<play.length() && byte(play[offset])!=10) {  // extract line
-        line+=play[offset++];
-      };
-      if(byte(play[offset])==10) offset++; // skip line feed
-
-      command=getCommand(line);
-      params=getParams(line);
-      rgb1=getRGB(params,1);
-      rgb2=getRGB(params,2);
-      times=getTimes(params);
-      frames=getFrames(params);
-      postCount=(postCount++) % 10000;
-
-      blinkEffect(rgb1,rgb2,frames, times);
-
-      ret+=command+":"+params+": R1:"+String(rgb1.R)+" G1:"+String(rgb1.G)+" B1:"+String(rgb1.B)+
-                               " R2:"+String(rgb2.R)+" G2:"+String(rgb2.G)+" B2:"+String(rgb2.B)+" Frames:"+String(frames)+" Times:"+String(times)+" <LF>";
-
-      
-    };   
-    
-    server.send(200,"text/plain", ret);
+    play=server.arg("plain");  //retrieve body from HTTP POST request
+    streaming=false; //quit streaming mode and enter effects playing mode into main loop
+    frame=0; //means it needs to fetch command from play sequence
+    offset=0; // start parsing new line from leftmost character
+    //Serial.println("POST request");    
+    server.send(200,"text/plain", "OK");
     });
 
   // Start the server //MDB
@@ -292,9 +255,11 @@ void setup() {
 }
 
 void blankFrame() {
-  for (uint16_t i = 0; i < PIXELS_PER_STRIP; i++) {
-    strip.SetPixelColor(i, RgbColor(0, 0, 0));
-  };
+  paintFrame(RgbColor(0,0,0));
+}
+
+void paintFrame(RgbColor c) {
+  for (uint16_t i = 0; i < PIXELS_PER_STRIP; i++) strip.SetPixelColor(i, c);
   strip.Show();
 }
 
@@ -356,39 +321,67 @@ int getTimes(String params) {
   return t;
 }
 
-void blinkEffect(RgbColor rgb1, RgbColor rgb2, int frames, int times) {
-  // Blink all leds showing each color during "frames" frames and for "times" times
-  unsigned long startTime;
-  int localPostCount=postCount;
-
-  for(int t=1;t<=times ;t++) {
-    //startTime=millis();
-    //Serial.println(startTime);
-    for (uint16_t i = 0; i < PIXELS_PER_STRIP; i++) 
-      strip.SetPixelColor(i, rgb1);
-    strip.Show();
-    //delayTill(1000/60*frames+startTime,localPostCount);
-    delayFrames(frames);
-    //startTime=millis();
-    for (uint16_t i = 0; i < PIXELS_PER_STRIP; i++) 
-      strip.SetPixelColor(i, rgb2);
-    strip.Show();
-    //delayTill(1000/60*frames+startTime,localPostCount);
-    delayFrames(frames);
-  }
-}
-
-
-
-void delayFrames(int frames){
-  for(int i=1;i<=frames;i++) {
-    delay(16);
-    //delayMicroseconds(16600);
-  }
-}
 
 void loop() {
-  //Serial.print("-");
+  if(streaming) {
+    playStreaming();
+  } else {
+    int packetSize = udp.parsePacket();
+    if (packetSize > 0) udp.read();  //remove any udp packet from buffer while in effect mode
+    if(!playEffect()) { //when last frame of last effect switch back to streaming mode
+      streaming=true;
+    };
+    delay(16);
+  };
+  server.handleClient();
+}
+
+boolean playEffect() {
+  if(frame==0) {  // frame zero means to go get a command line from the HTTP request body
+    String line,params;
+    int pos;
+    if(offset>=play.length()) { // when "play sequence" is finished had to go back to streaming mode
+      return false;
+    } else { // try to fetch next "play sequence" line
+      line="";
+      while (offset<play.length() && byte(play[offset])!=10) {  // extract line
+        line+=play[offset++];
+      };
+      if(byte(play[offset])==10) offset++; // skip line feed
+
+      command=getCommand(line);  //Parse all parameters 
+      params=getParams(line);
+      rgb1=getRGB(params,1);
+      rgb2=getRGB(params,2);
+      times=getTimes(params);
+      frames=getFrames(params);
+      
+      frame++;        // advance to frame 1 to start animating effect
+   };   
+ };
+
+ //place here pointers to all Effect functions
+ if(command=="BLINK") blink(rgb1, rgb2, frames, times);
+
+ return true;
+}
+
+void blink(RgbColor rgb1, RgbColor rgb2, int frames, int times) {
+  // Blink all leds showing each color during "frames" frames and for "times" times
+
+  if(frame >= frames*2*times) { //if already played all frames & times, it means the effect ended
+    frame=0; 
+  } else {
+    if(frame % (frames*2) <= frames)   //calculate which frame is within each time, if it is within the first half show rgb1 otherwise rgb2
+      paintFrame(rgb1);
+    else
+      paintFrame(rgb2);
+    frame++;
+  };
+  return;
+}
+
+void playStreaming() {
   // if there's data available, read a packet
  // digitalWrite(BUILTIN_LED,LOW);
  if(lastStreamingFrame!=0 && millis()-lastStreamingFrame>STREAMING_TIMEOUT*1000) {
@@ -571,7 +564,7 @@ void loop() {
     
   }
   //delay(0);
-  server.handleClient(); //MDB give opportunity to process HTTP requests
+
 }
 
 String formatN(long n, int p) {
