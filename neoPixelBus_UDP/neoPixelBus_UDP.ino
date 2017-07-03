@@ -322,7 +322,7 @@ int getTimes(String params) {
 }
 
 
-void loop() {
+void loop() { //main program loop
   if(streaming) {
     playStreaming();
   } else {
@@ -362,24 +362,15 @@ boolean playEffect() {
 
  //place here pointers to all Effect functions
  if(command=="BLINK") blink(rgb1, rgb2, frames, times);
+ if(command=="HUE")   hue(rgb1, rgb2, frames, times);
+ if(command=="HUE2")  hue2(rgb1, rgb2, frames, times); 
+ if(command=="PULSE") pulse(rgb1, rgb2, frames, times);
+ if(command=="BLANK") blankFrame();
 
  return true;
 }
 
-void blink(RgbColor rgb1, RgbColor rgb2, int frames, int times) {
-  // Blink all leds showing each color during "frames" frames and for "times" times
 
-  if(frame >= frames*2*times) { //if already played all frames & times, it means the effect ended
-    frame=0; 
-  } else {
-    if(frame % (frames*2) <= frames)   //calculate which frame is within each time, if it is within the first half show rgb1 otherwise rgb2
-      paintFrame(rgb1);
-    else
-      paintFrame(rgb2);
-    frame++;
-  };
-  return;
-}
 
 void playStreaming() {
   // if there's data available, read a packet
@@ -586,5 +577,74 @@ String getSSIDs() { // build wifi information channel calls for JS code
   for(int i=0;i<n;i++)      s+="channel("+String(WiFi.channel(i))+","+String(WiFi.RSSI(i))+",'"+WiFi.SSID(i)+"');";
   return s;
 };
+
+
+// place effect functions HERE
+
+void blink(RgbColor rgb1, RgbColor rgb2, int frames, int times) {
+  // Blink all leds showing each color during "frames" frames and for "times" times
+
+  if(frame >= frames*2*times) { //if already played all frames & times, it means the effect ended
+    frame=0; 
+  } else {
+    if(frame % (frames*2) <= frames)   //calculate which frame is within each time, if it is within the first half show rgb1 otherwise rgb2
+      paintFrame(rgb1);
+    else
+      paintFrame(rgb2);
+    frame++;
+  };
+  return;
+}
+
+
+void hue(RgbColor rgb1, RgbColor rgb2, int frames, int times) {
+  // transition from rgb1 color to rgb2 color in "frames" frames, repeating "times" times
+
+  if(frame >= frames*times) { //if already played all frames & times, it means the effect ended
+    frame=0; 
+  } else {
+    int f=frame % frames;
+    //transition from rgb1 to rgb2
+    paintFrame(RgbColor(rgb1.R+(rgb2.R-rgb1.R)*f/frames,rgb1.G+(rgb2.G-rgb1.G)*f/frames,rgb1.B+(rgb2.B-rgb1.B)*f/frames));
+    frame++;
+  };
+  return;
+}
+
+void hue2(RgbColor rgb1, RgbColor rgb2, int frames, int times) {
+  // transition from rgb1 color to rgb2 color in "frames" frames and back to rgb1, repeating "times" times
+
+  if(frame >= frames*2*times) { //if already played all frames & times, it means the effect ended
+    frame=0; 
+  } else {
+    int f=frame % (frames*2);
+    
+    if(f <= frames)   //calculate if it is transitioning from rgb1 to rgb2 or the opposite
+      //transition from rgb1 to rgb2
+      paintFrame(RgbColor(rgb1.R+(rgb2.R-rgb1.R)*f/frames,rgb1.G+(rgb2.G-rgb1.G)*f/frames,rgb1.B+(rgb2.B-rgb1.B)*f/frames));
+    else
+      paintFrame(RgbColor(rgb1.R+(rgb2.R-rgb1.R)*(2*frames-f)/frames,rgb1.G+(rgb2.G-rgb1.G)*(2*frames-f)/frames,rgb1.B+(rgb2.B-rgb1.B)*(2*frames-f)/frames));
+    frame++;
+  };
+  return;
+}
+
+void pulse(RgbColor rgb1, RgbColor rgb2, int frames, int times) {
+  // transition from rgb1 color to rgb2 color in "frames" frames, then blank frame and wait for "frames" frames, repeating "times" times
+
+  if(frame >= frames*2*times) { //if already played all frames & times, it means the effect ended
+    frame=0; 
+  } else {
+    int f=frame % (frames*2);
+    
+    if(f <= frames)   //calculate if it is transitioning from rgb1 to rgb2 or the opposite
+      //transition from rgb1 to rgb2
+      paintFrame(RgbColor(rgb1.R+(rgb2.R-rgb1.R)*f/frames,rgb1.G+(rgb2.G-rgb1.G)*f/frames,rgb1.B+(rgb2.B-rgb1.B)*f/frames));
+    else
+      blankFrame();
+    frame++;
+  };
+  return;
+}
 
 
