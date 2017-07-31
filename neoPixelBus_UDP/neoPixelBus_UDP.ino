@@ -1,6 +1,6 @@
 // include some libraries
 #include <ESP8266WiFi.h>
-#include <ESP8266WebServer.h> //MDB
+#include <ESP8266WebServer.h>
 #include <WiFiUdp.h>
 
 //#include <NeoPixelBus.h>
@@ -11,6 +11,8 @@
 // at 30 fps I can go past this number succesfully though.
 #define PIXELS_PER_STRIP 512
 
+
+
 // This needs to be evenly divisible by PIXLES_PER_STRIP.
 // This represents how large our packets are that we send from our software source IN TERMS OF LEDS.
 #define CHUNK_SIZE 171
@@ -18,6 +20,7 @@
 
 // Dynamically limit brightness in terms of amperage.
 #define AMPS 4
+
 
 
 #define UDP_PORT 2390
@@ -56,6 +59,10 @@ RgbColor ledDataBuffer[ PIXELS_PER_STRIP];
 byte r;
 byte g;
 byte b;
+
+RgbColor InitialColor=RgbColor(255,255,255); //Set here the inital RGB color to show on module power up
+//RgbColor InitialColor=RgbColor(0,0,0);  //switch to this if you want the module turns on with all LEDs off
+
 
 byte action;
 
@@ -121,13 +128,23 @@ void setup() {
   Serial.println();
   Serial.println();
 
-
+  strip.Begin();  //start neopixel instance.
+    
   // We start by connecting to a WiFi network
   Serial.print("Connecting to ");
   Serial.println(ssid);
   WiFi.mode(WIFI_STA);  // WIFi STATION mode only
   WiFi.begin(ssid, pass);
   WiFi.config(local_ip, gateway, subnet);
+
+  //Animate from dark to initial color in 3 seconds on module power up
+  InitialColor=adjustToMaxMilliAmps(InitialColor);
+  for(int i=0;i<=90;i++) {
+    paintFrame(RgbColor(InitialColor.R*i/90.0,InitialColor.G*i/90.0,InitialColor.B*i/90.0));
+    delay(16);
+  };
+
+
 
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
@@ -153,12 +170,12 @@ void setup() {
 
   // Initial full black strip push and init.
   blankTime=micros();
-  strip.Begin();
-  for (uint16_t i = 0; i < PIXELS_PER_STRIP; i++) {
-    strip.SetPixelColor(i, RgbColor(0, 0, 0));
-    ledDataBuffer[i] = RgbColor(0, 0, 0);
-  }
-  strip.Show();
+  //strip.Begin();
+  //for (uint16_t i = 0; i < PIXELS_PER_STRIP; i++) {
+  //  strip.SetPixelColor(i, RgbColor(0, 0, 0));
+  //  ledDataBuffer[i] = RgbColor(0, 0, 0);
+  //}
+  //strip.Show();
   blankTime=micros()-blankTime;
 
   for(int i=0 ; i<framesToMonitor ; i++)  //blank all frames metadata
@@ -256,12 +273,26 @@ void setup() {
 
 void blankFrame() {
   paintFrame(RgbColor(0,0,0));
-}
+};
 
 void paintFrame(RgbColor c) {
+  //c=adjustToMaxMilliAmps(c); // do not allow to exceed max current
   for (uint16_t i = 0; i < PIXELS_PER_STRIP; i++) strip.SetPixelColor(i, c);
   strip.Show();
-}
+};
+
+RgbColor adjustToMaxMilliAmps(RgbColor c) {
+  float ma=20*(c.R+c.G+c.B)/255.0*PIXELS_PER_STRIP;
+  RgbColor r=c;
+  if (ma > milliAmpsLimit)  {// need to adjust down
+    r.R=c.R*milliAmpsLimit/ma;
+    r.G=c.G*milliAmpsLimit/ma;
+    r.B=c.B*milliAmpsLimit/ma;
+  }
+  Serial.println("milliAmpsLimit:"+String(milliAmpsLimit)+" ma:"+String(ma));
+  Serial.println("adjustToMaxMilliAmps :"+String(c.R)+" "+String(c.G)+" "+String(c.B)+" -> "+String(r.R)+" "+String(r.G)+" "+String(r.B));
+  return r;
+}; 
 
 String getCommand(String line){
   String ret=line.substring(0,line.indexOf(' '));
@@ -351,8 +382,8 @@ boolean playEffect() {
 
       command=getCommand(line);  //Parse all parameters 
       params=getParams(line);
-      rgb1=getRGB(params,1);
-      rgb2=getRGB(params,2);
+      rgb1=adjustToMaxMilliAmps(getRGB(params,1));  //retrieve RGB parameter and adjust down to stay within power limit
+      rgb2=adjustToMaxMilliAmps(getRGB(params,2));   //retrieve RGB parameter and adjust down to stay within power limit
       times=getTimes(params);
       frames=getFrames(params);
       
@@ -603,7 +634,8 @@ void hue(RgbColor rgb1, RgbColor rgb2, int frames, int times) {
   if(frame >= frames*times) { //if already played all frames & times, it means the effect ended
     frame=0; 
   } else {
-    int f=frame % frames;
+    //int f=frame % frames;
+    float f=(frame % frames)*frames/(frames-1.0);  
     //transition from rgb1 to rgb2
     paintFrame(RgbColor(rgb1.R+(rgb2.R-rgb1.R)*f/frames,rgb1.G+(rgb2.G-rgb1.G)*f/frames,rgb1.B+(rgb2.B-rgb1.B)*f/frames));
     frame++;
