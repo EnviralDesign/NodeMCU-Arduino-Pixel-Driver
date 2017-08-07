@@ -2,16 +2,19 @@
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
 #include <WiFiUdp.h>
+#include <NeoPixelBrightnessBus.h>
+#include <WiFiManager.h>
+#include <DoubleResetDetector.h>
 
-//#include <NeoPixelBus.h>
-#include <NeoPixelBrightnessBus.h> // instead of NeoPixelBus.h
+#define DRD_TIMEOUT 10
+#define DRD_ADDRESS 0
+DoubleResetDetector drd(DRD_TIMEOUT, DRD_ADDRESS);
+
 
 // I have not tried more than 512 succesfully at 60 fps
 // but I get glitching and stuttering and not sure where the bottleneck is exactly.
 // at 30 fps I can go past this number succesfully though.
 #define PIXELS_PER_STRIP 512
-
-
 
 // This needs to be evenly divisible by PIXLES_PER_STRIP.
 // This represents how large our packets are that we send from our software source IN TERMS OF LEDS.
@@ -21,23 +24,19 @@
 // Dynamically limit brightness in terms of amperage.
 #define AMPS 4
 
-
-
 #define UDP_PORT 2390
 #define UDP_PORT_OUT 2391
 #define STREAMING_TIMEOUT 10  //  blank streaming frame after X seconds
 
-
-
 // NETWORK_HOME
-IPAddress local_ip(10, 10, 10, 200);
-IPAddress gateway(10, 10, 10, 254); //LM
+//IPAddress local_ip(10, 10, 10, 200);
+//IPAddress gateway(10, 10, 10, 254); //LM
 //IPAddress local_ip(192,168,1,200); //MDB
 //IPAddress gateway(192, 168, 1, 1); //MDB
-IPAddress subnet(255, 255, 255, 0);
+//IPAddress subnet(255, 255, 255, 0);
 
-char ssid[] = "ssid";   // your SSID
-char pass[] = "pwd";       // your network password 
+//char ssid[] = "SSID";   // your SSID
+//char pass[] = "PWD";       // your network password 
 
 
 // If this is set to 1, a lot of debug data will print to the console.
@@ -48,7 +47,6 @@ char pass[] = "pwd";       // your network password
 
 //#define pixelPin D4  // make sure to set this to the correct pin, ignored for UartDriven branch
 const uint8_t PixelPin = 2;
-//NeoPixelBus<NeoGrbFeature, NeoEsp8266Dma800KbpsMethod> strip(PIXELS_PER_STRIP, PixelPin);
 NeoPixelBrightnessBus<NeoGrbFeature, NeoEsp8266Dma800KbpsMethod> strip(PIXELS_PER_STRIP, PixelPin);
 NeoGamma<NeoGammaTableMethod> colorGamma;
 
@@ -111,8 +109,13 @@ volatile boolean streaming=true;
 // variables to keep status during effects play
 String play="";
 String command="";
-RgbColor rgb1=0;
-RgbColor rgb2=0;
+RgbColor rgb1=RgbColor(0,0,0);
+RgbColor rgb2=RgbColor(0,0,0);
+HsbColor hsb1=HsbColor(0,0,0);
+HsbColor hsb2=HsbColor(0,0,0);
+HslColor hsl1=HslColor(0,0,0);
+HslColor hsl2=HslColor(0,0,0);
+
 int times=1;
 int frames=1;
 int offset=0;
@@ -120,22 +123,30 @@ volatile int frame=0;
 
 String rt;
 
+WiFiManager wifiManager;
+
 
 void setup() {
 
+  if (drd.detectDoubleReset()) { //if user double clicks reset button, then reset wifisetting
+    wifiManager.resetSettings();
+    drd.stop();
+  }
+ 
   ////////////////// A whole bunch of initialization stuff that prints no matter what.
   Serial.begin(115200);
   Serial.println();
   Serial.println();
 
+
   strip.Begin();  //start neopixel instance.
     
   // We start by connecting to a WiFi network
-  Serial.print("Connecting to ");
-  Serial.println(ssid);
-  WiFi.mode(WIFI_STA);  // WIFi STATION mode only
-  WiFi.begin(ssid, pass);
-  WiFi.config(local_ip, gateway, subnet);
+  //Serial.print("Connecting to ");
+  //Serial.println(ssid);
+ // WiFi.mode(WIFI_STA);  // WIFi STATION mode only
+  //WiFi.begin(ssid, pass);
+  //WiFi.config(local_ip, gateway, subnet);
 
   //Animate from dark to initial color in 3 seconds on module power up
   InitialColor=adjustToMaxMilliAmps(InitialColor);
@@ -144,13 +155,13 @@ void setup() {
     delay(16);
   };
 
+  //while (WiFi.status() != WL_CONNECTED) {
+  //  delay(500);
+  //  Serial.print(".");
+  //}
+  //Serial.println("");
 
-
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-  }
-  Serial.println("");
+  wifiManager.autoConnect("Enviral");
 
   Serial.println("WiFi connected");
   Serial.println("IP address: ");
@@ -182,10 +193,13 @@ void setup() {
      framesMD[i].frame=0;
 
   // here we place all the different web services definition
+
   server.on("/survey", HTTP_GET, []() {
     // build Javascript code to draw SVG wifi graph
+    IPAddress local_ip=WiFi.localIP();
     rt="<!doctype html><html><body>";
-    rt+="Connected to:"+String(ssid)+"<br>IP address:"+String(local_ip[0]) + "." + String(local_ip[1]) + "." + String(local_ip[2]) + "." + String(local_ip[3]);
+//    rt+="Connected to:"+String(ssid)+"<br>IP address:"+String(local_ip[0]) + "." + String(local_ip[1]) + "." + String(local_ip[2]) + "." + String(local_ip[3]);
+    rt+="Connected to:"+WiFi.SSID()+"<br>IP address:"+String(local_ip[0]) + "." + String(local_ip[1]) + "." + String(local_ip[2]) + "." + String(local_ip[3]);
     rt+="<br>port:"+String(UDP_PORT)+"<br>Expected packet size:"+String(UDP_PACKET_SIZE);
     rt+="<br><h2>WiFi monitoring</h2><svg id='svg' width='800' height='800'></svg><script type='text/javascript'>";
     rt+="var svgns = 'http://www.w3.org/2000/svg';var svg = document.getElementById('svg');";
@@ -208,8 +222,10 @@ void setup() {
 
   server.on("/getstatus", HTTP_GET, []() {
     // build Javascript code to draw SVG wifi graph
+    IPAddress local_ip=WiFi.localIP();
     rt="<!doctype html><html><body>";
-    rt+="Connected to:"+String(ssid)+"<br>IP address:"+String(local_ip[0]) + "." + String(local_ip[1]) + "." + String(local_ip[2]) + "." + String(local_ip[3]);
+    //rt+="Connected to:"+String(ssid)+"<br>IP address:"+String(local_ip[0]) + "." + String(local_ip[1]) + "." + String(local_ip[2]) + "." + String(local_ip[3]);
+    rt+="Connected to:"+WiFi.SSID()+"<br>IP address:"+String(local_ip[0]) + "." + String(local_ip[1]) + "." + String(local_ip[2]) + "." + String(local_ip[3]);
     rt+="<br>port:"+String(UDP_PORT)+"<br>Expected packet size:"+String(UDP_PACKET_SIZE);
     rt+="</body></html>";
     server.send(200, "text/html", rt);
@@ -336,6 +352,66 @@ RgbColor getRGB(String params, int n) {
   return RgbColor(r,g,b);
 };
 
+RgbColor getHSB(String params) {
+  return getHSB(params,1);
+}
+
+RgbColor getHSB(String params, int n) {
+  int h=0,s=0,b=0;
+  int pos=0;
+  String colors;
+  for (int i=1;i<=n;i++) {
+    pos=params.indexOf('HSB',pos)+1;
+  }
+  if(pos>0) { //found HSB token at pos
+    colors=params.substring(pos,(params.substring(pos)+" ").indexOf(' ')+pos);//extract colors  values between HSB token and next space/LF
+    Serial.println(params+" -> "+String(n)+":"+String(pos)+" <"+colors+">");
+    h=constrain(colors.toInt(),0,360); // isolate Hue component
+    pos=colors.indexOf(',');
+    if (pos>=0) {
+      s=constrain(colors.substring(pos+1).toInt(),0,100); // isolate Saturation component
+      pos=colors.indexOf(',',pos+1);
+      if (pos>=0) 
+        b=constrain(colors.substring(pos+1).toInt(),0,100); //isolate Brightness component
+    }
+  }
+  RgbColor r=RgbColor(255,0,0);
+  HsbColor hsb=HsbColor(r);
+  //Serial.println("Color: R:"+String(r.R)+" G:"+String(r.G)+" B:"+String(r.B)+" / h:"+String(hsb.H)+" s:"+String(hsb.S)+" b:"+String(hsb.B));; 
+  //Serial.println("h:"+String(h)+" s:"+String(s)+" b:"+String(b));
+
+  return HsbColor(h/360.0f,s/100.0f,b/100.0f);
+};
+
+HslColor getHSL(String params) {
+  return getHSL(params,1);
+}
+
+HslColor getHSL(String params, int n) {
+  int h=0,s=0,l=0;
+  int pos=0;
+  String colors;
+  for (int i=1;i<=n;i++) {
+    pos=params.indexOf('HSL',pos)+1;
+  }
+  if(pos>0) { //found HSL token at pos
+    colors=params.substring(pos,(params.substring(pos)+" ").indexOf(' ')+pos);//extract colors  values between HSL token and next space/LF
+    Serial.println(params+" -> "+String(n)+":"+String(pos)+" <"+colors+">");
+    h=constrain(colors.toInt(),0,360); // isolate Hue component
+    pos=colors.indexOf(',');
+    if (pos>=0) {
+      s=constrain(colors.substring(pos+1).toInt(),0,100); // isolate Saturation component
+      pos=colors.indexOf(',',pos+1);
+      if (pos>=0) 
+        l=constrain(colors.substring(pos+1).toInt(),0,100); //isolate Lightness component
+    }
+  }
+  
+  return HslColor(h/360.0f,s/100.0f,l/100.0f);
+};
+
+
+
 int getFrames(String params) {
   int f=1;
   int pos=params.indexOf("F");
@@ -384,10 +460,14 @@ boolean playEffect() {
       params=getParams(line);
       rgb1=adjustToMaxMilliAmps(getRGB(params,1));  //retrieve RGB parameter and adjust down to stay within power limit
       rgb2=adjustToMaxMilliAmps(getRGB(params,2));   //retrieve RGB parameter and adjust down to stay within power limit
+      hsb1=getHSB(params,1);
+      hsb2=getHSB(params,2);
+      hsl1=getHSL(params,1);
+      hsl2=getHSL(params,2);
       times=getTimes(params);
       frames=getFrames(params);
       
-      frame++;        // advance to frame 1 to start animating effect
+      //frame++;        // advance to frame 1 to start animating effect
    };   
  };
 
@@ -397,6 +477,8 @@ boolean playEffect() {
  if(command=="HUE2")  hue2(rgb1, rgb2, frames, times); 
  if(command=="PULSE") pulse(rgb1, rgb2, frames, times);
  if(command=="BLANK") blankFrame();
+ if(command=="HUEHSB") huehsb(hsb1,hsb2,frames, times);
+ if(command=="HUEHSL") huehsl(hsl1,hsl2,frames, times);
 
  return true;
 }
@@ -527,12 +609,6 @@ void playStreaming() {
       // can loop through all the values again now that we have the right numbers
       // and scale brightness if we need to.
       
-      //for (int i = 0; i < PIXELS_PER_STRIP; i++) {
-      //  prevColor = strip.GetPixelColor(i);
-      //  prevColor.Darken(millisMultiplier);
-      //  strip.SetPixelColor(i, prevColor);
-      //}
-
       if(millisMultiplier!=255)  //dim LEDs only if required
         strip.SetBrightness(millisMultiplier); // this new brightness control method was added to lib recently, affects entire strip at once.
       strip.Show();   // write all the pixels out
@@ -609,8 +685,21 @@ String getSSIDs() { // build wifi information channel calls for JS code
   return s;
 };
 
+String sHSB(HsbColor h) {
+  return "(H:"+String(h.H)+",S:"+String(h.S)+",B:"+String(h.B)+")";
+}
 
-// place effect functions HERE
+String sHSL(HslColor h) {
+  return "(H:"+String(h.H)+",S:"+String(h.S)+",L:"+String(h.L)+")";
+}
+
+String getMac() {
+  byte mac[6];
+  WiFi.macAddress(mac);
+  return String(mac[0],HEX)+String(mac[1],HEX)+String(mac[2],HEX)+String(mac[3],HEX)+String(mac[4],HEX)+String(mac[5],HEX)+String(mac[6],HEX);
+}
+
+// *** PLACE EFFECT FUNCTIONS BELOW ****
 
 void blink(RgbColor rgb1, RgbColor rgb2, int frames, int times) {
   // Blink all leds showing each color during "frames" frames and for "times" times
@@ -629,7 +718,7 @@ void blink(RgbColor rgb1, RgbColor rgb2, int frames, int times) {
 
 
 void hue(RgbColor rgb1, RgbColor rgb2, int frames, int times) {
-  // transition from rgb1 color to rgb2 color in "frames" frames, repeating "times" times
+  // linear transition from rgb1 color to rgb2 color in "frames" frames, repeating "times" times
 
   if(frame >= frames*times) { //if already played all frames & times, it means the effect ended
     frame=0; 
@@ -644,7 +733,7 @@ void hue(RgbColor rgb1, RgbColor rgb2, int frames, int times) {
 }
 
 void hue2(RgbColor rgb1, RgbColor rgb2, int frames, int times) {
-  // transition from rgb1 color to rgb2 color in "frames" frames and back to rgb1, repeating "times" times
+  // linear transition from rgb1 color to rgb2 color in "frames" frames and back to rgb1, repeating "times" times
 
   if(frame >= frames*2*times) { //if already played all frames & times, it means the effect ended
     frame=0; 
@@ -662,7 +751,7 @@ void hue2(RgbColor rgb1, RgbColor rgb2, int frames, int times) {
 }
 
 void pulse(RgbColor rgb1, RgbColor rgb2, int frames, int times) {
-  // transition from rgb1 color to rgb2 color in "frames" frames, then blank frame and wait for "frames" frames, repeating "times" times
+  // linear transition from rgb1 color to rgb2 color in "frames" frames, then blank frame and wait for "frames" frames, repeating "times" times
 
   if(frame >= frames*2*times) { //if already played all frames & times, it means the effect ended
     frame=0; 
@@ -679,4 +768,36 @@ void pulse(RgbColor rgb1, RgbColor rgb2, int frames, int times) {
   return;
 }
 
+void huehsb(HsbColor hsb1, HsbColor hsb2, int frames, int times) {
+  // linear transition between hsb1 ro hsb2 color around the HSB wheel during "frames" frames and repeated "times" times
+  HsbColor hsb;
+  if(frame >= frames*times) { //if already played all frames & times, it means the effect ended
+    frame=0; 
+  } else {
+    float progress=(frame % frames)/(frames-1.0);  
+    //transition from rgb1 to rgb2
+    hsb=HsbColor(hsb1.H+(hsb2.H-hsb1.H)*progress,hsb1.S+(hsb2.S-hsb1.S)*progress,hsb1.B+(hsb2.B-hsb1.B)*progress);
+    //Serial.print(progress);Serial.println(sHSB(hsb1)+" - "+sHSB(hsb2)+":"+sHSB(hsb));
+    paintFrame(RgbColor(hsb));
+    frame++;
+  };
+  return;
+}
+
+void huehsl(HslColor hsl1, HslColor hsl2, int frames, int times) {
+  // linear transition between hsb1 ro hsb2 color around the HSL wheel during "frames" frames and repeated "times" times
+  // Hue 0-360 gives the color, Saturation 0-100, Lightness: 0=black, 50= solid color, 100=white
+  HslColor hsl;
+  if(frame >= frames*times) { //if already played all frames & times, it means the effect ended
+    frame=0;  
+  } else {
+    float progress=(frame % frames)/(frames-1.0);  
+    //transition from rgb1 to rgb2
+    hsl=HslColor(hsl1.H+(hsl2.H-hsl1.H)*progress,hsl1.S+(hsl2.S-hsl1.S)*progress,hsl1.L+(hsl2.L-hsl1.L)*progress);
+    //Serial.print(progress);Serial.println(sHSL(hsl1)+" - "+sHSL(hsl2)+":"+sHSL(hsl));
+    paintFrame(RgbColor(hsl));
+    frame++;
+  };
+  return;
+}
 
