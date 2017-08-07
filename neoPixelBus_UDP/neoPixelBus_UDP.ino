@@ -8,7 +8,7 @@
 
 #define DRD_TIMEOUT 10
 #define DRD_ADDRESS 0
-DoubleResetDetector drd(DRD_TIMEOUT, DRD_ADDRESS);
+DoubleResetDetector drd(DRD_TIMEOUT, DRD_ADDRESS); 
 
 
 // I have not tried more than 512 succesfully at 60 fps
