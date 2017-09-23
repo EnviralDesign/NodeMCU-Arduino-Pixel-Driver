@@ -59,7 +59,7 @@ byte g;
 byte b;
 
 RgbColor InitialColor=RgbColor(255,255,255); //Set here the inital RGB color to show on module power up
-//RgbColor InitialColor=RgbColor(0,0,0);  //switch to this if you want the module turns on with all LEDs off
+RgbColor LastColor=RgbColor(0,0,0);  //hold the last colour in order to stitch one effect with the following.
 
 
 byte action;
@@ -331,7 +331,7 @@ RgbColor getRGB(String params) {
 }
 
 RgbColor getRGB(String params, int n) {
-  byte r=0;g=0;b=0;
+  byte r=0;g=0;b=0;   
   int pos=0;
   String colors;
   for (int i=1;i<=n;i++) {
@@ -351,6 +351,16 @@ RgbColor getRGB(String params, int n) {
   }
   return RgbColor(r,g,b);
 };
+
+int getRGBColors(String params) {
+  int pos=0;
+  int c=0;
+  while ((pos=params.indexOf("RGB",pos))>=0) {
+    c++;
+    pos++;
+  };
+  return c;
+}
 
 RgbColor getHSB(String params) {
   return getHSB(params,1);
@@ -446,7 +456,7 @@ void loop() { //main program loop
 boolean playEffect() {
   if(frame==0) {  // frame zero means to go get a command line from the HTTP request body
     String line,params;
-    int pos;
+    int pos,RGBColors;
     if(offset>=play.length()) { // when "play sequence" is finished had to go back to streaming mode
       return false;
     } else { // try to fetch next "play sequence" line
@@ -458,8 +468,15 @@ boolean playEffect() {
 
       command=getCommand(line);  //Parse all parameters 
       params=getParams(line);
-      rgb1=adjustToMaxMilliAmps(getRGB(params,1));  //retrieve RGB parameter and adjust down to stay within power limit
-      rgb2=adjustToMaxMilliAmps(getRGB(params,2));   //retrieve RGB parameter and adjust down to stay within power limit
+      RGBColors=getRGBColors(params);
+      if(RGBColors==1) {
+        rgb1=LastColor;
+        rgb2=adjustToMaxMilliAmps(getRGB(params,1));
+      } else {
+        rgb1=adjustToMaxMilliAmps(getRGB(params,1));  //retrieve RGB parameter and adjust down to stay within power limit
+        rgb2=adjustToMaxMilliAmps(getRGB(params,2));   //retrieve RGB parameter and adjust down to stay within power limit
+      };
+      LastColor=rgb2;
       hsb1=getHSB(params,1);
       hsb2=getHSB(params,2);
       hsl1=getHSL(params,1);
