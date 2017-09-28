@@ -106,6 +106,11 @@ long lastStreamingFrame=0;
 
 volatile boolean streaming=true;
 
+// Default Settings
+String settings="mAPerPixel 60 Amps 4 name Enviral topology RA 10 10";
+int mAPerPixel,Amps;
+String name,topology;
+
 // variables to keep status during effects play
 String play="";
 String command="";
@@ -352,10 +357,10 @@ RgbColor getRGB(String params, int n) {
   return RgbColor(r,g,b);
 };
 
-int getRGBColors(String params) {
+int getColors(String params,String colorSystem) {
   int pos=0;
   int c=0;
-  while ((pos=params.indexOf("RGB",pos))>=0) {
+  while ((pos=params.indexOf(colorSystem,pos))>=0) {
     c++;
     pos++;
   };
@@ -420,6 +425,45 @@ HslColor getHSL(String params, int n) {
   return HslColor(h/360.0f,s/100.0f,l/100.0f);
 };
 
+void getSettings(String params) {
+  int pos=0;int pos2=0;
+  String topo="RA";
+  int x=1;int y=1;
+  params.toUpperCase();
+  params+=" "; //add space terminator
+  
+  // get milliamps per logical pixel
+  pos=params.indexOf("MAPERPIXEL");
+  if(pos>0) mAPerPixel=params.substring(pos+1).toInt();
+  
+  //get total Amps budget
+  pos=params.indexOf("AMPS");
+  if(pos>0) Amps=params.substring(pos+1).toInt();
+
+  //get module name
+  pos=params.indexOf("NAME");
+  if(pos>=0) {
+    while (params.substring(pos,pos+1)==" ") pos++; //skip spaces
+    pos2=params.indexOf(" ",pos);
+    if (pos2>=0) name=params.substring(pos,pos2);
+  };
+  
+  //get topology
+  pos=params.indexOf("TOPOLOGY");
+  while (params.substring(pos,pos+1)==" ") pos++; //skip spaces
+  if(params.substring(pos,pos+2)=="R ") topo="R";
+  if(params.substring(pos,pos+2)=="C ") topo="C";
+  if(params.substring(pos,pos+3)=="RA ") topo="RA";
+  if(params.substring(pos,pos+3)=="CA ") topo="CA";
+  pos=params.indexOf(" ",pos);
+  while (params.substring(pos,pos+1)==" ") pos++; //skip spaces
+  x=params.substring(pos).toInt();
+  pos=params.indexOf(" ",pos+1);
+  y=params.substring(pos).toInt();
+
+  return;
+}
+
 
 
 int getFrames(String params) {
@@ -456,7 +500,7 @@ void loop() { //main program loop
 boolean playEffect() {
   if(frame==0) {  // frame zero means to go get a command line from the HTTP request body
     String line,params;
-    int pos,RGBColors;
+    int pos,RGBcolors,HSBcolors,HSLcolors;
     if(offset>=play.length()) { // when "play sequence" is finished had to go back to streaming mode
       return false;
     } else { // try to fetch next "play sequence" line
@@ -468,19 +512,40 @@ boolean playEffect() {
 
       command=getCommand(line);  //Parse all parameters 
       params=getParams(line);
-      RGBColors=getRGBColors(params);
-      if(RGBColors==1) {
+      // Get RBG colors
+      RGBcolors=getColors(params,"RGB");
+      //Serial.println("Colors:"+String(colors));
+      if(RGBcolors==1) {
         rgb1=LastColor;
         rgb2=adjustToMaxMilliAmps(getRGB(params,1));
       } else {
         rgb1=adjustToMaxMilliAmps(getRGB(params,1));  //retrieve RGB parameter and adjust down to stay within power limit
         rgb2=adjustToMaxMilliAmps(getRGB(params,2));   //retrieve RGB parameter and adjust down to stay within power limit
       };
-      LastColor=rgb2;
-      hsb1=getHSB(params,1);
-      hsb2=getHSB(params,2);
-      hsl1=getHSL(params,1);
-      hsl2=getHSL(params,2);
+      if(RGBcolors>0) LastColor=rgb2;
+
+      // Get HSB colors
+      HSBcolors=getColors(params,"HSB");
+      if(HSBcolors==1) {
+        hsb1=LastColor;
+        hsb2=getHSB(params,1);
+      } else {
+        hsb1=getHSB(params,1);
+        hsb2=getHSB(params,2);
+      };
+      if(HSBcolors>0) LastColor=hsb2;
+
+      // Get HSL colors
+      HSLcolors=getColors(params,"HSL");
+      if(HSLcolors==1) {
+        hsl1=LastColor;
+        hsl2=getHSL(params,1);
+      } else {
+        hsl1=getHSL(params,1);
+        hsl2=getHSL(params,2);
+      };
+      if(HSLcolors>0) LastColor=hsl2;     
+
       times=getTimes(params);
       frames=getFrames(params);
       
