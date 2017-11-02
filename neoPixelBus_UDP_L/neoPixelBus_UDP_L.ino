@@ -10,7 +10,6 @@
 #define DRD_ADDRESS 0
 DoubleResetDetector drd(DRD_TIMEOUT, DRD_ADDRESS); 
 
-
 // I have not tried more than 512 succesfully at 60 fps
 // but I get glitching and stuttering and not sure where the bottleneck is exactly.
 // at 30 fps I can go past this number succesfully though.
@@ -570,7 +569,6 @@ boolean playEffect() {
       //frame++;        // advance to frame 1 to start animating effect
    };   
  };
- Serial.println("asdasd");
  Serial.println("command:" + command + " rgb1:" + rgb1.R+","+rgb1.G+","+rgb1.B + " rgb2:" + rgb2.R+","+rgb2.G+","+rgb2.B + " duration(frames):" + frames + " repetitions:" + times);
  
  //place here pointers to all Effect functions
