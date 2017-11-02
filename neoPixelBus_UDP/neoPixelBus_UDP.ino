@@ -14,7 +14,7 @@ DoubleResetDetector drd(DRD_TIMEOUT, DRD_ADDRESS);
 // I have not tried more than 512 succesfully at 60 fps
 // but I get glitching and stuttering and not sure where the bottleneck is exactly.
 // at 30 fps I can go past this number succesfully though.
-#define PIXELS_PER_STRIP 512
+#define PIXELS_PER_STRIP 150
 
 // This needs to be evenly divisible by PIXLES_PER_STRIP.
 // This represents how large our packets are that we send from our software source IN TERMS OF LEDS.
@@ -22,7 +22,7 @@ DoubleResetDetector drd(DRD_TIMEOUT, DRD_ADDRESS);
 #define MAX_ACTION_BYTE 4  //maximum numbers of chunks per frame in order to validate we do not receive a wrong index when there are communciation errors
 
 // Dynamically limit brightness in terms of amperage.
-#define AMPS 4
+#define AMPS 3
 
 #define UDP_PORT 2390
 #define UDP_PORT_OUT 2391
@@ -310,8 +310,8 @@ RgbColor adjustToMaxMilliAmps(RgbColor c) {
     r.G=c.G*milliAmpsLimit/ma;
     r.B=c.B*milliAmpsLimit/ma;
   }
-  Serial.println("milliAmpsLimit:"+String(milliAmpsLimit)+" ma:"+String(ma));
-  Serial.println("adjustToMaxMilliAmps :"+String(c.R)+" "+String(c.G)+" "+String(c.B)+" -> "+String(r.R)+" "+String(r.G)+" "+String(r.B));
+  // Serial.println("milliAmpsLimit:"+String(milliAmpsLimit)+" ma:"+String(ma));
+  // Serial.println("adjustToMaxMilliAmps :"+String(c.R)+" "+String(c.G)+" "+String(c.B)+" -> "+String(r.R)+" "+String(r.G)+" "+String(r.B));
   return r;
 }; 
 
@@ -344,7 +344,7 @@ RgbColor getRGB(String params, int n) {
   }
   if(pos>0) { //found RGB token at pos
     colors=params.substring(pos,(params.substring(pos)+" ").indexOf(' ')+pos);//extract colors  values between RGB token and next space/LF
-    Serial.println(params+" -> "+String(n)+":"+String(pos)+" <"+colors+">");
+    // Serial.println(params+" -> "+String(n)+":"+String(pos)+" <"+colors+">");
     r=constrain(colors.toInt(),0,255); // isolate red component
     pos=colors.indexOf(',');
     if (pos>=0) {
@@ -380,7 +380,7 @@ RgbColor getHSB(String params, int n) {
   }
   if(pos>0) { //found HSB token at pos
     colors=params.substring(pos,(params.substring(pos)+" ").indexOf(' ')+pos);//extract colors  values between HSB token and next space/LF
-    Serial.println(params+" -> "+String(n)+":"+String(pos)+" <"+colors+">");
+    // Serial.println(params+" -> "+String(n)+":"+String(pos)+" <"+colors+">");
     h=constrain(colors.toInt(),0,360); // isolate Hue component
     pos=colors.indexOf(',');
     if (pos>=0) {
@@ -411,7 +411,7 @@ HslColor getHSL(String params, int n) {
   }
   if(pos>0) { //found HSL token at pos
     colors=params.substring(pos,(params.substring(pos)+" ").indexOf(' ')+pos);//extract colors  values between HSL token and next space/LF
-    Serial.println(params+" -> "+String(n)+":"+String(pos)+" <"+colors+">");
+    // Serial.println(params+" -> "+String(n)+":"+String(pos)+" <"+colors+">");
     h=constrain(colors.toInt(),0,360); // isolate Hue component
     pos=colors.indexOf(',');
     if (pos>=0) {
@@ -553,6 +553,8 @@ boolean playEffect() {
    };   
  };
 
+ Serial.println("command:" + command + " rgb1:" + rgb1.R+","+rgb1.G+","+rgb1.B + " rgb2:" + rgb2.R+","+rgb2.G+","+rgb2.B + " frames:" + frames + " times:" + times);
+ 
  //place here pointers to all Effect functions
  if(command=="BLINK") blink(rgb1, rgb2, frames, times);
  if(command=="HUE")   hue(rgb1, rgb2, frames, times);
