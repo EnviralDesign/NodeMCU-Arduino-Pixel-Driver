@@ -13,7 +13,7 @@ DoubleResetDetector drd(DRD_TIMEOUT, DRD_ADDRESS);
 // I have not tried more than 512 succesfully at 60 fps
 // but I get glitching and stuttering and not sure where the bottleneck is exactly.
 // at 30 fps I can go past this number succesfully though.
-#define PIXELS_PER_STRIP 150
+#define PIXELS_PER_STRIP 100
 
 // This needs to be evenly divisible by PIXLES_PER_STRIP.
 // This represents how large our packets are that we send from our software source IN TERMS OF LEDS.
@@ -238,7 +238,7 @@ void setup() {
   });
   
   
-  server.on("/info", HTTP_GET, []() {
+  server.on("/mcu_info", HTTP_GET, []() {
     // build javascript-like data
     IPAddress local_ip=WiFi.localIP();
     rt = "name:"+tmpName;
