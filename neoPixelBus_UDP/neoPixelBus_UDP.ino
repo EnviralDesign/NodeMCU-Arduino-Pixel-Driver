@@ -10,6 +10,10 @@
 #define DRD_ADDRESS 0
 DoubleResetDetector drd(DRD_TIMEOUT, DRD_ADDRESS); 
 
+
+String tmpName = "testMCU";
+
+
 // I have not tried more than 512 succesfully at 60 fps
 // but I get glitching and stuttering and not sure where the bottleneck is exactly.
 // at 30 fps I can go past this number succesfully though.
@@ -26,8 +30,6 @@ DoubleResetDetector drd(DRD_TIMEOUT, DRD_ADDRESS);
 #define UDP_PORT 2390
 #define UDP_PORT_OUT 2391
 #define STREAMING_TIMEOUT 10  //  blank streaming frame after X seconds
-
-String tmpName = "testMCU";
 
 // NETWORK_HOME
 //IPAddress local_ip(10, 10, 10, 200);
