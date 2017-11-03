@@ -10,7 +10,6 @@
 #define DRD_ADDRESS 0
 DoubleResetDetector drd(DRD_TIMEOUT, DRD_ADDRESS); 
 
-
 // I have not tried more than 512 succesfully at 60 fps
 // but I get glitching and stuttering and not sure where the bottleneck is exactly.
 // at 30 fps I can go past this number succesfully though.
@@ -27,6 +26,8 @@ DoubleResetDetector drd(DRD_TIMEOUT, DRD_ADDRESS);
 #define UDP_PORT 2390
 #define UDP_PORT_OUT 2391
 #define STREAMING_TIMEOUT 10  //  blank streaming frame after X seconds
+
+String tmpName = "testMCU";
 
 // NETWORK_HOME
 //IPAddress local_ip(10, 10, 10, 200);
@@ -233,6 +234,22 @@ void setup() {
     rt+="Connected to:"+WiFi.SSID()+"<br>IP address:"+String(local_ip[0]) + "." + String(local_ip[1]) + "." + String(local_ip[2]) + "." + String(local_ip[3]);
     rt+="<br>port:"+String(UDP_PORT)+"<br>Expected packet size:"+String(UDP_PACKET_SIZE);
     rt+="</body></html>";
+    server.send(200, "text/html", rt);
+  });
+  
+  
+  server.on("/info", HTTP_GET, []() {
+    // build javascript-like data
+    IPAddress local_ip=WiFi.localIP();
+    rt = "name:"+tmpName;
+    rt += ",";
+    rt += "ip:"+String(local_ip[0]) + "." + String(local_ip[1]) + "." + String(local_ip[2]) + "." + String(local_ip[3]);
+    rt += ",";
+    rt += "ssid:"+WiFi.SSID();
+    rt += ",";
+    rt += "port:"+String(UDP_PORT);
+    rt += ",";
+    rt += "packetsize:"+String(UDP_PACKET_SIZE);
     server.send(200, "text/html", rt);
   });
 
@@ -552,8 +569,7 @@ boolean playEffect() {
       //frame++;        // advance to frame 1 to start animating effect
    };   
  };
-
- Serial.println("command:" + command + " rgb1:" + rgb1.R+","+rgb1.G+","+rgb1.B + " rgb2:" + rgb2.R+","+rgb2.G+","+rgb2.B + " frames:" + frames + " times:" + times);
+ Serial.println("command:" + command + " rgb1:" + rgb1.R+","+rgb1.G+","+rgb1.B + " rgb2:" + rgb2.R+","+rgb2.G+","+rgb2.B + " duration(frames):" + frames + " repetitions:" + times);
  
  //place here pointers to all Effect functions
  if(command=="BLINK") blink(rgb1, rgb2, frames, times);
