@@ -1,15 +1,51 @@
-# NodeMCU-Arduino-Pixel-Driver
-This library is for the nodeMCU / esp8266. It enables the esp8266 to be universal wireless pixel controller with a wifi-configuration portal and support for both streaming per pixel protocol and a command based light-weight protocol.
+# PxlNode-8266
+---
+## What this project is about:
 
-You can find touch designer examples for driving the two modes below. There will be more general code based examples in the future.
+**PxlNode-8266** is a flexible lightweight wifi based pixel controller designed around the **ESP-8266** development board.
 
-1. **Streaming mode:**
-  1. TouchDesigner/nodeMCU_softwareTestingPlatform.toe
-2. **Command Mode:**
-  1. TouchDesigner/scanFornodeMCUs.toe
+It has a very constrained use case currently. The two biggest factors are:
+- Currently only supports neopixel aka ws2811 / ws2812b etc style led.
+- Configured for 1 strip output, using the nodeMCU's hardware acellerated DMA output for fast refresh rates.
+
+What makes this library special is it's innate support for 2 very different modes of operation:
+
+- **Streaming mode**
+  - Uses a simple and straight forward UDP based protocol for streaming pixel data from a source device.
+  - Current tests have achieved a consistent 60 fps @ 512 pixels.
+  - **TouchDesigner/nodeMCU_softwareTestingPlatform.toe**
 
 
-### SETUP AND INSTALLATION:
+- **Command Mode**
+  - Uses a very lightweight messaging protocol utilizing http requests with POST / GET.
+  - Allows for IOT friendly, minimal programming to control the nodeMCU / leds with very little strain on networks etc.
+  - **TouchDesigner/scanFornodeMCUs.toe**
+
+
+- **Supported Platforms** that are currently being developed for:
+    - Touch Designer (*for power users - pc and mac*)
+    - Node-Red on Raspberry Pi (*IOT, also good for shared web based access*)
+    - Android app (*for casual users, personal projects, and fully wireless setups*)
+
+
+
+## Arduino IDE Setup:
+
+1. Install Arduino IDE 1.8.2.
+ - You can probably use later versions just fine but may need to troubleshoot any issues that come up between versions / libraries etc.
+2. Go to boards manager, and install **esp8266** version **2.3.0** by *ESP8266 Community*
+ - Probably good idea to use the latest version here.
+3. When a nodeMCU is plugged in the computer should recognize it in device manager as a serial device on **COM 3**
+4. You'll want to install some libraries. ultimately these will need to be included in your file:
+```
+#include <ESP8266WiFi.h>
+#include <ESP8266WebServer.h>
+#include <WiFiUdp.h>
+#include <NeoPixelBrightnessBus.h>
+#include <WiFiManager.h>
+#include <DoubleResetDetector.h>
+```
+
 
 1. Register on [Derivative.ca]
 2. [Download the installer] for the latest 099 x64 build: https://www.derivative.ca/099/Downloads/experimental.asp
