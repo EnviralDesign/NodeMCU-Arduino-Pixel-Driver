@@ -53,7 +53,7 @@ What makes this library special is it's innate support for 2 very different mode
   - **Android app** (*for casual users, personal projects, and fully wireless setups*)
     - This is probably what most people will use for casual purposes. Does not support streaming YET, development for command mode is first and nearing completion then phase 2 will include support for streaming / pixel mapping animations etc.
 
----
+
 
 ## Arduino IDE Setup:
 
@@ -72,7 +72,7 @@ What makes this library special is it's innate support for 2 very different mode
 #include <DoubleResetDetector.h>
 ```
 
----
+
 
 ## Touch Designer Setup:
 
@@ -82,14 +82,14 @@ What makes this library special is it's innate support for 2 very different mode
 3. Open Touch Designer, and perform the 1 time activation / login:
 ![alt tag](http://www.enviral-design.com/downloads/loginToTouch.jpg)
 
----
+
 
 ### Wiring:
 
 Currently this platform only supports 1 strip of pixels connected to the hardware accelerated pin of the nodeMCU. **GPIO3 aka RXD0** seen below - fourth from the bottom, on the right.
 ![alt tag](https://pradeepsinghblog.files.wordpress.com/2016/04/nodemcu_pins.png?w=616)
 
----
+
 
 ### Programming your nodeMCU:
 
@@ -133,9 +133,9 @@ String tmpName = "testMCU";
 - **UDP_PORT**
   - This port is what the nodeMCU assumes it will receive streaming pixel data through. Not usually necessary to change unless you have conflicts.
 
----
 
-## Connecting to a wireless network
+
+## Connecting to a wireless network:
 
 The first thing this software will want to do is connect to a wifi network. These two steps are what the nodeMCU tries to do when powered on:
 
@@ -147,23 +147,27 @@ If you're running this for the first time, you'll probably be greeted with the s
 ![alt tag](https://www.enviral-design.com/blog/wp-content/uploads/2017/11/wifiscan_enviral.jpg)
 Once configured and saved, your nodeMCU will reset on its own, and "Enviral" will disappear, and you can now start sending commands or pixel data to your nodeMCU.
 
----
+
 
 ## Streaming Pixel Data to the PxlNode:
 
-There are a few variables in the arduino code that I am working on exposing to the Enviral wifi configuration portal, but for now you will need to configure these manually in the arduino IDE.
+There are 2 variables at this moment that you'll want to keep track of from your arduino code.
 
-Assuming you've done that, you can stream data via UDP to a nodeMCU.
+- PIXELS_PER_STRIP
+- CHUNK_SIZE
+
+Assuming you have those handy, you can stream data via UDP to a nodeMCU.
 For now, I will simply point those who are curious to the fully working examples built in touch designer.
 
-Touch Designer is a visual node-based programming environment so the examples should be clear enough that if you're comfortable with coding, you'll be able to piece together how it works from examples. That said, I will be updating this readme with more complete documentation on how the streaming protocol is built.
+Touch Designer is a visual node-based programming environment so the examples should be clear enough that if you're comfortable with coding, you'll be able to piece together how it works from what's there. That said, I will be updating this readme with more complete documentation on how the streaming protocol is built.
+
+You'll see a place to enter the two variables mentioned above - reccomend starting with the SIMPLE example.
 
 - **TouchDesigner\Streaming\StreamingExample_SIMPLE.toe**
 - **TouchDesigner\Streaming\StreamingExample_ADVANCED.toe**
   - Main difference in the advanced version, several things are automated and has support for many nodeMCU's.
 
 
----
 
 ## Controlling the PxlNode's LEDS via commands:
 
@@ -193,9 +197,9 @@ The address you send the POST command to would look like this:
 Currently all effects are constant colors applied to all leds in the array. Phase 2 of programming for the PxlNode will include other effect types that are spatially mapped!
 
 
----
 
-### Working Examples
+
+## Working Examples:
 
 * Ongoing R&D photo gallery
 https://goo.gl/photos/gtSJMFyWE7NLGgep9
@@ -206,12 +210,16 @@ https://www.youtube.com/watch?v=c9nZ8aAHsXQ
 * 1 x 512 pixel battery powered demo @ 60 fps
 https://www.youtube.com/watch?v=akc9gpH_Zqw
 
----
 
 
-### Up to date R&D Q/A
+
+## Up to date R&D Q/A:
 
 - https://docs.google.com/document/d/15fohtsI8zHB3XPj2QLFtR6nHrb2y4t7B38Z7AyHkmPo/edit?usp=sharing
+
+
+## Website:
+https://www.enviral-design.com
 
 
 
