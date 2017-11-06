@@ -1,5 +1,8 @@
 # PxlNode-8266
 
+![alt tag](https://www.enviral-design.com/blog/wp-content/uploads/2017/11/cool-PxlNode.jpg)
+
+
 ## What this project is about:
 
 **PxlNode-8266** is a flexible lightweight wifi based pixel controller designed around the **ESP-8266** development board.
@@ -160,7 +163,7 @@ Touch Designer is a visual node-based programming environment so the examples sh
   - Main difference in the advanced version, several things are automated and has support for many nodeMCU's.
 
 
-  ---
+---
 
 ## Controlling the PxlNode's LEDS via commands:
 
