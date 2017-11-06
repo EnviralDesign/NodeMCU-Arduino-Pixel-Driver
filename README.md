@@ -4,7 +4,7 @@
 
 **PxlNode-8266** is a flexible lightweight wifi based pixel controller designed around the **ESP-8266** development board.
 
-It has a very constrained use case currently. The two biggest factors are:
+The PxlNode is currently designed to work with a specific led setup:
 - Currently only supports neopixel aka ws2811 / ws2812b etc style led.
 - Configured for 1 strip output, using the nodeMCU's hardware acellerated DMA output for fast refresh rates.
 
@@ -38,7 +38,7 @@ What makes this library special is it's innate support for 2 very different mode
 
 
 - **Dynamic brightness limitation**
-  - Once you correctly configure your nodeMCU's number of pixels and amps limit, it will intelligently dim the entire strip when the calculated power consumption of the colors exceeds limits. This allows
+  - Once you correctly configure your nodeMCU's number of pixels and amps limit, it will intelligently dim the entire strip when the calculated power consumption of the colors exceeds limits.
   - This allows for more creativity, and flexibility and mobility (battery powered low amp projects etc) with out sacrificing brightness when you don't need to.
 
 
