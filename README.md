@@ -84,14 +84,14 @@ What makes this library special is it's innate support for 2 very different mode
 
 
 
-### Wiring:
+## Wiring:
 
 Currently this platform only supports 1 strip of pixels connected to the hardware accelerated pin of the nodeMCU. **GPIO3 aka RXD0** seen below - fourth from the bottom, on the right.
 ![alt tag](https://pradeepsinghblog.files.wordpress.com/2016/04/nodemcu_pins.png?w=616)
 
 
 
-### Programming your nodeMCU:
+## Programming your nodeMCU:
 
 There are a few variables in the arduino code that are not yet exposed to the user through the wifi configuration portal. This is on my todo list and will be done soon but for now you'll need to configure a few things manually, before uploading your code.
 
