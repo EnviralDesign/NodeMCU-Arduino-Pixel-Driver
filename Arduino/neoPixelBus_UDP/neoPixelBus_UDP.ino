@@ -11,23 +11,30 @@
 DoubleResetDetector drd(DRD_TIMEOUT, DRD_ADDRESS); 
 
 
+///////////////////// USER DEFINED VARIABLES START HERE /////////////////////////////
+
 String tmpName = "testMCU";
 
-
-// I have not tried more than 512 succesfully at 60 fps
-// but I get glitching and stuttering and not sure where the bottleneck is exactly.
-// at 30 fps I can go past this number succesfully though.
+// number of physical pixels in the strip. 
 #define PIXELS_PER_STRIP 100
 
 // This needs to be evenly divisible by PIXLES_PER_STRIP.
 // This represents how large our packets are that we send from our software source IN TERMS OF LEDS.
-#define CHUNK_SIZE 171
-#define MAX_ACTION_BYTE 4  //maximum numbers of chunks per frame in order to validate we do not receive a wrong index when there are communciation errors
+#define CHUNK_SIZE 25
+
+//maximum numbers of chunks per frame in order to validate we do not receive a wrong index when there are communciation errors
+#define MAX_ACTION_BYTE 4 
 
 // Dynamically limit brightness in terms of amperage.
 #define AMPS 3
 
+// UDP port to receive streaming data on.
 #define UDP_PORT 2390
+
+///////////////////// USER DEFINED VARIABLES END HERE /////////////////////////////
+
+
+
 #define UDP_PORT_OUT 2391
 #define STREAMING_TIMEOUT 10  //  blank streaming frame after X seconds
 
@@ -639,7 +646,6 @@ void playStreaming() {
 
       // loop through our recently received packet, and assign the corresponding
       // RGB values to their respective places in the strip.
-
       if(action<=MAX_ACTION_BYTE) { //check the ation byte is within limits
         uint16_t led=0;
         for (uint16_t i = 1; i < CHUNK_SIZE*3;) {
@@ -648,9 +654,7 @@ void playStreaming() {
           g = packetBuffer[i++];
           b = packetBuffer[i++];
 
-          //strip.SetPixelColor(i + initialOffset, RgbColor(r, g, b)); // this line does not use gamma correction
           strip.SetPixelColor(initialOffset+led++, colorGamma.Correct(RgbColor(r, g, b))); // this line uses gamma correction
-
           milliAmpsCounter += (r + g + b); // increment our milliamps counter accordingly for use later.
         }
       }
