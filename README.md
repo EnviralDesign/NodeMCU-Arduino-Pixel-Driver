@@ -188,7 +188,7 @@ blink rgb32,0,0 rgb0,0,32 t10 f20
 hue rgb32,0,0 rgb0,0,32 t10 f60
 hue2 rgb32,0,0 rgb0,0,32 t10 f30
 huehsl hsl0,100,50 hsl359,100,50 f360 t1
-huehsb hsl0,100,0 hsl0,100,100 f360 t1
+huehsb hsb0,100,0 hsb0,100,100 f360 t1
 ```
 
 Once you have a command put together as a simple string, you'll send that to your PxlNode as a **POST** command where `plain='argument'` ( *not as raw post data* )
