@@ -12,9 +12,9 @@
 #include <EEPROM.h>
 
 #define WRITEMODE 278
-#define PIXELS_PER_STRIP_ADDRESS 12
-#define CHUNK_SIZE_ADDRESS 16
-#define MA_PER_PIXEL_ADDRESS 20
+#define PIXELS_PER_STRIP_ADDRESS 0
+#define CHUNK_SIZE_ADDRESS 4
+#define MA_PER_PIXEL_ADDRESS 8
 
 class EnviralDesign
 {
