@@ -18,7 +18,7 @@ DoubleResetDetector drd(DRD_TIMEOUT, DRD_ADDRESS);
 String tmpName = "testMCU";
 
 // number of physical pixels in the strip.
-uint16_t pixelsPerStrip = 100;
+uint16_t pixelsPerStrip = 10;
 
 // This needs to be evenly divisible by PIXLES_PER_STRIP.
 // This represents how large our packets are that we send from our software source IN TERMS OF LEDS.
@@ -601,7 +601,8 @@ boolean playEffect() {
       //frame++;        // advance to frame 1 to start animating effect
    };   
  };
- Serial.println("command:" + command + " rgb1:" + rgb1.R+","+rgb1.G+","+rgb1.B + " rgb2:" + rgb2.R+","+rgb2.G+","+rgb2.B + " duration(frames):" + frames + " repetitions:" + times);
+ //////////////////////////// uncomment this next line to see what commands are being sent to the nodeMCU
+ //Serial.println("command:" + command + " rgb1:" + rgb1.R+","+rgb1.G+","+rgb1.B + " rgb2:" + rgb2.R+","+rgb2.G+","+rgb2.B + " duration(frames):" + frames + " repetitions:" + times);
  
  //place here pointers to all Effect functions
  if(command=="BLINK") blink(rgb1, rgb2, frames, times);
@@ -637,14 +638,6 @@ void playStreaming() {
    
     //Serial.println(String(frameIndex)+":"+frameNumber+" - "+String(action)+" "+String(packetSize)+"/"+String(udpPacketSize)); 
     
-    if (DEBUG_MODE) { // If Debug mode is on print some stuff
-      Serial.println("---Incoming---");
-      Serial.print("Packet Size: ");
-      Serial.println(packetSize);
-      Serial.print("Action: ");
-      Serial.println(action);
-    }
-    
     if (action != 0)
     { // if action byte is anything but 0 (this means we're receiving some portion of our rgb pixel data..)
 
@@ -654,18 +647,6 @@ void playStreaming() {
       
       // Figure out what our starting offset is.
       const uint16_t initialOffset = chunkSize * (action - 1);
-      
-      if (DEBUG_MODE) { // If Debug mode is on print some stuff
-        Serial.print("---------: ");
-        Serial.print(chunkSize);
-        Serial.print("   ");
-        Serial.println((action - 1));
-        Serial.println("");
-        Serial.print("Init_offset: ");
-        Serial.println(initialOffset);
-        Serial.print(" ifLessThan: ");
-        Serial.println((initialOffset + chunkSize));
-      }
 
       // loop through our recently received packet, and assign the corresponding
       // RGB values to their respective places in the strip.
@@ -680,10 +661,6 @@ void playStreaming() {
           strip.SetPixelColor(initialOffset+led++, colorGamma.Correct(RgbColor(r, g, b))); // this line uses gamma correction
           milliAmpsCounter += (r + g + b); // increment our milliamps counter accordingly for use later.
         }
-      }
-
-      if (DEBUG_MODE) { // If Debug mode is on print some stuff
-        Serial.println("Finished For Loop!");
       }
 
       // if we're debugging packet drops, modify reply buffer.
@@ -726,13 +703,6 @@ void playStreaming() {
       // Collect data  MDB
       framesMD[frameIndex].adjustedPower=millisMultiplier;
 
-      if (DEBUG_MODE) { // If Debug mode is on print some stuff
-        Serial.println("Trying to update leds...");
-        Serial.print("Dimmin leds to: ");
-        Serial.println( millisMultiplier );
-      }
-
-
       // We already applied our r/g/b values to the strip, but we haven't updated it yet.
       // Since we needed the sum total of r/g/b values to calculate brightness, we
       // can loop through all the values again now that we have the right numbers
@@ -743,34 +713,7 @@ void playStreaming() {
       strip.Show();   // write all the pixels out
       lastStreamingFrame=millis();
       milliAmpsCounter = 0; // reset the milliAmpsCounter for the next frame.
-
-      //Serial.println("");  ////////////////////
-
-      if (DEBUG_MODE) { // If Debug mode is on print some stuff
-        Serial.println("Finished updating Leds!");
-      }
-
-      // Send reply to sender, basically a ping that says hey we just updated leds.
-      //Serial.print("IP: ");
-      //Serial.println(udp.remoteIP());
-      //Serial.print("Port: ");
-      //Serial.println(udp.remotePort());
-
-      // if we're debugging packet drops, modify reply buffer.
-      if (PACKETDROP_DEBUG_MODE) {
-        // set the last byte of the reply buffer to 2, indiciating that the frame was sent to leds.
-        ReplyBuffer[sizeof(ReplyBuffer) - 1] = 2;
-        ReplyBuffer[0] = counterHolder;
-        counterHolder += 1;
-        // write out the response packet back to sender!
-        udp.beginPacket(udp.remoteIP(), UDP_PORT_OUT);
-        // clear the response buffer string.
-        for (byte i = 0; i < sizeof(ReplyBuffer); i++) {
-          udp.write(ReplyBuffer[i]);
-          ReplyBuffer[i] = 0;
-        }
-        udp.endPacket();
-      }
+      
 
       //measure total frame processing time
       framesMD[frameIndex].processingTime=micros()-framesMD[frameIndex].arrivedAt;
@@ -783,14 +726,8 @@ void playStreaming() {
 
       pinMode(BUILTIN_LED, INPUT);
     }
-
-    if (DEBUG_MODE) { // If Debug mode is on print some stuff
-      Serial.println("--end of packet and stuff--");
-      Serial.println("");
-    }
     
   }
-  //delay(0);
 
 }
 
