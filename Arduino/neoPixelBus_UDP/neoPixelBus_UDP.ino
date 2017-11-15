@@ -24,10 +24,7 @@ uint16_t pixelsPerStrip = 10;
 
 // This needs to be evenly divisible by PIXLES_PER_STRIP.
 // This represents how large our packets are that we send from our software source IN TERMS OF LEDS.
-uint16_t chunkSize = 10;
-
-//maximum numbers of chunks per frame in order to validate we do not receive a wrong index when there are communciation errors
-#define MAX_ACTION_BYTE 4 
+uint16_t chunkSize = 5;
 
 // Dynamically limit brightness in terms of amperage.
 #define AMPS .45
@@ -37,9 +34,12 @@ uint16_t maPerPixel = 60;
 #define UDP_PORT 2390
 
 //Set here the inital RGB color to show on module power up
-RgbColor InitialColor=RgbColor(200,150,30); 
+int InitColor[] = {200, 75, 10};
 
 ///////////////////// USER DEFINED VARIABLES END HERE /////////////////////////////
+
+//maximum numbers of chunks per frame in order to validate we do not receive a wrong index when there are communciation errors
+#define MAX_ACTION_BYTE 4 
 
 //Reconfigures default settings with values stored in flash memory if present
 EnviralDesign ed(&pixelsPerStrip, &chunkSize, &maPerPixel);
@@ -77,6 +77,8 @@ byte r;
 byte g;
 byte b;
 
+//Set here the inital RGB color to show on module power up
+RgbColor InitialColor=RgbColor(InitColor[0],InitColor[1],InitColor[2]); 
 RgbColor LastColor=RgbColor(0,0,0);  //hold the last colour in order to stitch one effect with the following.
 
 
