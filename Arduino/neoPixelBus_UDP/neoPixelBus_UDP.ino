@@ -115,8 +115,6 @@ struct framesMetaData {
           int adjustedPower; 
           long processingTime;} framesMD[framesToMonitor];
 
-
-
 long blankTime;
 long processingTime;
 long arrivedAt;
