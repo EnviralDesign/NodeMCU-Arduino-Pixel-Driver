@@ -14,25 +14,30 @@
 DoubleResetDetector drd(DRD_TIMEOUT, DRD_ADDRESS); 
 
 ///////////////////// USER DEFINED VARIABLES START HERE /////////////////////////////
+// NOTICE: these startup settings, especially pertaining to number of pixels and starting color
+// will ensure that your nodeMCU can be powered on and run off of a usb 2.0 port of your computer.
 
-String tmpName = "testMCU";
+String tmpName = "PxlNode-8266";
 
 // number of physical pixels in the strip.
-uint16_t pixelsPerStrip = 100;
+uint16_t pixelsPerStrip = 10;
 
 // This needs to be evenly divisible by PIXLES_PER_STRIP.
 // This represents how large our packets are that we send from our software source IN TERMS OF LEDS.
-uint16_t chunkSize = 25;
+uint16_t chunkSize = 10;
 
 //maximum numbers of chunks per frame in order to validate we do not receive a wrong index when there are communciation errors
 #define MAX_ACTION_BYTE 4 
 
 // Dynamically limit brightness in terms of amperage.
-#define AMPS 3
+#define AMPS .45
 uint16_t maPerPixel = 60;
 
 // UDP port to receive streaming data on.
 #define UDP_PORT 2390
+
+//Set here the inital RGB color to show on module power up
+RgbColor InitialColor=RgbColor(200,150,30); 
 
 ///////////////////// USER DEFINED VARIABLES END HERE /////////////////////////////
 
@@ -72,7 +77,6 @@ byte r;
 byte g;
 byte b;
 
-RgbColor InitialColor=RgbColor(255,255,255); //Set here the inital RGB color to show on module power up
 RgbColor LastColor=RgbColor(0,0,0);  //hold the last colour in order to stitch one effect with the following.
 
 
