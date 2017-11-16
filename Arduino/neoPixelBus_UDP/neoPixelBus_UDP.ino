@@ -17,24 +17,24 @@ DoubleResetDetector drd(DRD_TIMEOUT, DRD_ADDRESS);
 // NOTICE: these startup settings, especially pertaining to number of pixels and starting color
 // will ensure that your nodeMCU can be powered on and run off of a usb 2.0 port of your computer.
 
-String tmpName = "PxlNode-8266";
+String deviceName = "PxlNode-8266";
 
 // number of physical pixels in the strip.
-uint16_t pixelsPerStrip = 10;
+uint16_t pixelsPerStrip = 100;
 
 // This needs to be evenly divisible by PIXLES_PER_STRIP.
 // This represents how large our packets are that we send from our software source IN TERMS OF LEDS.
-uint16_t chunkSize = 5;
+uint16_t chunkSize = 25;
 
 // Dynamically limit brightness in terms of amperage.
-#define AMPS .45
+float amps = .45;
 uint16_t maPerPixel = 60;
 
 // UDP port to receive streaming data on.
-#define UDP_PORT 2390
+uint16_t udpPort = 2390;
 
 //Set here the inital RGB color to show on module power up
-int InitColor[] = {200, 75, 10};
+byte InitColor[] = {200, 75, 10};
 
 ///////////////////// USER DEFINED VARIABLES END HERE /////////////////////////////
 
@@ -42,7 +42,7 @@ int InitColor[] = {200, 75, 10};
 #define MAX_ACTION_BYTE 4 
 
 //Reconfigures default settings with values stored in flash memory if present
-EnviralDesign ed(&pixelsPerStrip, &chunkSize, &maPerPixel);
+EnviralDesign ed(&pixelsPerStrip, &chunkSize, &maPerPixel, &deviceName, &amps, &udpPort, InitColor);
 
 #define UDP_PORT_OUT 2391
 #define STREAMING_TIMEOUT 10  //  blank streaming frame after X seconds
@@ -86,7 +86,7 @@ byte action;
 
 // used later for holding values - used to dynamically limit brightness by amperage.
 RgbColor prevColor;
-int milliAmpsLimit = AMPS * 1000;
+int milliAmpsLimit = amps * 1000;
 int milliAmpsCounter = 0;
 byte millisMultiplier = 0;
 
@@ -190,7 +190,7 @@ void setup() {
   Serial.println(WiFi.localIP());
 
   Serial.println("Starting UDP");
-  udp.begin(UDP_PORT);
+  udp.begin(udpPort);
   Serial.print("Local port: ");
   Serial.println(udp.localPort());
   Serial.print("Expected packagesize:");
@@ -222,7 +222,7 @@ void setup() {
     rt="<!doctype html><html><body>";
 //    rt+="Connected to:"+String(ssid)+"<br>IP address:"+String(local_ip[0]) + "." + String(local_ip[1]) + "." + String(local_ip[2]) + "." + String(local_ip[3]);
     rt+="Connected to:"+WiFi.SSID()+"<br>IP address:"+String(local_ip[0]) + "." + String(local_ip[1]) + "." + String(local_ip[2]) + "." + String(local_ip[3]);
-    rt+="<br>port:"+String(UDP_PORT)+"<br>Expected packet size:"+String(udpPacketSize);
+    rt+="<br>port:"+String(udpPort)+"<br>Expected packet size:"+String(udpPacketSize);
     rt+="<br><h2>WiFi monitoring</h2><svg id='svg' width='800' height='800'></svg><script type='text/javascript'>";
     rt+="var svgns = 'http://www.w3.org/2000/svg';var svg = document.getElementById('svg');";
     rt+="var color=0,colors = ['red','orange','blue','green','purple','cyan','magenta','yellow'];";
@@ -248,7 +248,7 @@ void setup() {
     rt="<!doctype html><html><body>";
     //rt+="Connected to:"+String(ssid)+"<br>IP address:"+String(local_ip[0]) + "." + String(local_ip[1]) + "." + String(local_ip[2]) + "." + String(local_ip[3]);
     rt+="Connected to:"+WiFi.SSID()+"<br>IP address:"+String(local_ip[0]) + "." + String(local_ip[1]) + "." + String(local_ip[2]) + "." + String(local_ip[3]);
-    rt+="<br>port:"+String(UDP_PORT)+"<br>Expected packet size:"+String(udpPacketSize);
+    rt+="<br>port:"+String(udpPort)+"<br>Expected packet size:"+String(udpPacketSize);
     rt+="</body></html>";
     server.send(200, "text/html", rt);
   });
@@ -257,15 +257,17 @@ void setup() {
   server.on("/mcu_info", HTTP_GET, []() {
     // build javascript-like data
     IPAddress local_ip=WiFi.localIP();
-    rt = "name:"+tmpName;
-    rt += ",";
-    rt += "ip:"+String(local_ip[0]) + "." + String(local_ip[1]) + "." + String(local_ip[2]) + "." + String(local_ip[3]);
-    rt += ",";
-    rt += "ssid:"+WiFi.SSID();
-    rt += ",";
-    rt += "port:"+String(UDP_PORT);
-    rt += ",";
-    rt += "packetsize:"+String(udpPacketSize);
+    rt = "<!doctype html><html><body><h1>Node Settings</h1><ul>";
+    rt += "<li>name: "+deviceName+"</li>";
+    rt += "<li>ip: "+String(local_ip[0]) + "." + String(local_ip[1]) + "." + String(local_ip[2]) + "." + String(local_ip[3]) + "</li>";
+    rt += "<li>ssid: "+WiFi.SSID() + "</li>";
+    rt += "<li>port: "+String(udpPort) + "</li>";
+    rt += "<li>packetsize: "+String(udpPacketSize) + "</li>";
+    rt += "<li>pixels per strip: " + String(pixelsPerStrip) + "</li>";
+    rt += "<li>chunk size: " + String(chunkSize) + "</li>";
+    rt += "<li>amps limit: " + String(amps) + "</li>";
+    rt += "<li>warm up color: [" + String(InitColor[0]) + ", " + String(InitColor[1]) + ", " + String(InitColor[2]) + "]</li>";
+    rt += "</ul></body></html>";
     server.send(200, "text/html", rt);
   });
 
@@ -347,7 +349,7 @@ void setup() {
     delay(500);
     WiFi.forceSleepBegin(); wdt_reset(); ESP.restart(); while(1)wdt_reset();
    });
-
+  
   // Start the server //MDB
   server.begin();
 }
