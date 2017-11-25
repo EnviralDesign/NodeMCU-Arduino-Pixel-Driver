@@ -386,8 +386,8 @@ RgbColor adjustToMaxMilliAmps(RgbColor c) {
     r.G=c.G*milliAmpsLimit/ma;
     r.B=c.B*milliAmpsLimit/ma;
   }
-   Serial.println("milliAmpsLimit:"+String(milliAmpsLimit)+" ma:"+String(ma));
-   Serial.println("adjustToMaxMilliAmps :"+String(c.R)+" "+String(c.G)+" "+String(c.B)+" -> "+String(r.R)+" "+String(r.G)+" "+String(r.B));
+   //Serial.println("milliAmpsLimit:"+String(milliAmpsLimit)+" ma:"+String(ma));
+   //Serial.println("adjustToMaxMilliAmps :"+String(c.R)+" "+String(c.G)+" "+String(c.B)+" -> "+String(r.R)+" "+String(r.G)+" "+String(r.B));
   return r;
 }; 
 
