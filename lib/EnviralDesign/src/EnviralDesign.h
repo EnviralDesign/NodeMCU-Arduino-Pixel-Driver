@@ -11,15 +11,14 @@
 #include <Arduino.h>
 #include <EEPROM.h>
 
-#define WRITEMODE 278
 #define COMPILE_TIME 0
-#define PIXELS_PER_STRIP_ADDRESS 1
-#define CHUNK_SIZE_ADDRESS 5
-#define MA_PER_PIXEL_ADDRESS 9
-#define AMPS 13
-#define UDP_PORT 19
-#define INIT_COLOR 23
-#define NAME_ADDRESS 28
+#define PIXELS_PER_STRIP_ADDRESS 2
+#define CHUNK_SIZE_ADDRESS 6
+#define MA_PER_PIXEL_ADDRESS 10
+#define AMPS 14
+#define UDP_PORT 20
+#define INIT_COLOR 24
+#define NAME_ADDRESS 29
 
 typedef union
 {
@@ -27,10 +26,18 @@ typedef union
     byte bytes[4];
 } FLOAT_ARRAY;
 
+typedef union
+{
+    uint16_t num;
+    byte bytes[2];
+} UINT16_ARRAY;
+
 class EnviralDesign
 {
 public:
+    EnviralDesign();
     EnviralDesign(uint16_t *pixelsPerStrip, uint16_t *chunkSize, uint16_t *maPerPixel, String *deviceName, float *amps, uint16_t *udpPort, byte *InitColor);
+    void start();
     void update(uint16_t pixelsPerStrip, uint16_t chunkSize, uint16_t maPerPixel);
     void updatePixelsPerStrip(uint16_t pixelsPerStrip);
     void updateChunkSize(uint16_t chunkSize);
@@ -39,7 +46,14 @@ public:
     void updateAmps(float amps);
     void updateUDPport(uint16_t udpPort);
     void updateInitColor(byte *InitColor);
-private:
+//private:
+    uint16_t *pix;
+    uint16_t *ch;
+    uint16_t *maP;
+    String *dName;
+    float *a;
+    uint16_t *uP;
+    byte *iC;
     uint16_t readIntFromAddress(uint16_t address);
     float readFloatFromAddress(uint16_t address);
     String readStringFromAddress(uint16_t address);
@@ -48,6 +62,7 @@ private:
     void writeStringToAddress(uint16_t address, String value);
     void updateMode(uint16_t address);
     boolean isWriteMode(uint16_t address);
-    void setCompile();
+    void setCompile(String cotime);
+    uint16_t getStoredTime(uint16_t address);
 };
 #endif

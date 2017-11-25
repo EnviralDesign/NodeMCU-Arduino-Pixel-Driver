@@ -7,10 +7,10 @@
 #include <DoubleResetDetector.h>
 
 #include <EnviralDesign.h>
-#include <ESP.h>
 
 #define DRD_TIMEOUT 10
 #define DRD_ADDRESS 0
+#define ARBITRARY 100
 DoubleResetDetector drd(DRD_TIMEOUT, DRD_ADDRESS); 
 
 ///////////////////// USER DEFINED VARIABLES START HERE /////////////////////////////
@@ -27,8 +27,8 @@ uint16_t pixelsPerStrip = 100;
 uint16_t chunkSize = 25;
 
 // Dynamically limit brightness in terms of amperage.
-float amps = .45;
-uint16_t maPerPixel = 60;
+float amps = 3;
+uint16_t mAPerPixel = 60;
 
 // UDP port to receive streaming data on.
 uint16_t udpPort = 2390;
@@ -39,10 +39,10 @@ byte InitColor[] = {200, 75, 10};
 ///////////////////// USER DEFINED VARIABLES END HERE /////////////////////////////
 
 //maximum numbers of chunks per frame in order to validate we do not receive a wrong index when there are communciation errors
-#define MAX_ACTION_BYTE 4 
+#define MAX_ACTION_BYTE 4
 
-//Reconfigures default settings with values stored in flash memory if present
-EnviralDesign ed(&pixelsPerStrip, &chunkSize, &maPerPixel, &deviceName, &amps, &udpPort, InitColor);
+//Interfaces user defined variables with memory stored in EEPROM
+EnviralDesign ed(&pixelsPerStrip, &chunkSize, &mAPerPixel, &deviceName, &amps, &udpPort, InitColor);
 
 #define UDP_PORT_OUT 2391
 #define STREAMING_TIMEOUT 10  //  blank streaming frame after X seconds
@@ -66,19 +66,19 @@ EnviralDesign ed(&pixelsPerStrip, &chunkSize, &maPerPixel, &deviceName, &amps, &
 
 //#define pixelPin D4  // make sure to set this to the correct pin, ignored for UartDriven branch
 const uint8_t PixelPin = 2;
-NeoPixelBrightnessBus<NeoGrbFeature, NeoEsp8266Dma800KbpsMethod> strip(pixelsPerStrip, PixelPin);
+NeoPixelBrightnessBus<NeoGrbFeature, NeoEsp8266Dma800KbpsMethod> *strip;
 NeoGamma<NeoGammaTableMethod> colorGamma;
 
 // holds chunksize x 3(chans per led) + 1 "action" byte
-uint16_t udpPacketSize = ((chunkSize*3)+1);
-byte * packetBuffer = (byte *)malloc(udpPacketSize);//buffer to hold incoming and outgoing packets
-RgbColor * ledDataBuffer = (RgbColor *)malloc(pixelsPerStrip);
+uint16_t udpPacketSize;
+byte * packetBuffer;
+RgbColor * ledDataBuffer;
 byte r;
 byte g;
 byte b;
 
 //Set here the inital RGB color to show on module power up
-RgbColor InitialColor=RgbColor(InitColor[0],InitColor[1],InitColor[2]); 
+RgbColor InitialColor;
 RgbColor LastColor=RgbColor(0,0,0);  //hold the last colour in order to stitch one effect with the following.
 
 
@@ -125,9 +125,9 @@ long lastStreamingFrame=0;
 volatile boolean streaming=true;
 
 // Default Settings
-String settings="mAPerPixel 60 Amps 4 name Enviral topology RA 10 10";
-int mAPerPixel,Amps;
-String name,topology;
+String settings="mAPerPixel 60 Amps 4 name Enviral topology RA 10 10"; //mAPerPixel and Amps no longer used here
+
+String topology;
 
 // variables to keep status during effects play
 String play="";
@@ -159,9 +159,15 @@ void setup() {
   Serial.begin(115200);
   Serial.println();
   Serial.println();
-  Serial.println(F("Serial started"));
+  Serial.println(F("Serial started")); 
+  
+  ed.setCompile(String(__TIME__));
+  ed.start();
 
-  strip.Begin();  //start neopixel instance.
+  setUdpPacketSize();
+  
+  //Initializes NeoPixelBus
+  startNeoPixelBus();
     
   // We start by connecting to a WiFi network
   //Serial.print("Connecting to ");
@@ -171,11 +177,7 @@ void setup() {
   //WiFi.config(local_ip, gateway, subnet);
 
   //Animate from dark to initial color in 3 seconds on module power up
-  InitialColor=adjustToMaxMilliAmps(InitialColor);
-  for(int i=0;i<=90;i++) {
-    paintFrame(RgbColor(InitialColor.R*i/90.0,InitialColor.G*i/90.0,InitialColor.B*i/90.0));
-    delay(16);
-  };
+  initDisplay();
 
   //while (WiFi.status() != WL_CONNECTED) {
   //  delay(500);
@@ -189,8 +191,7 @@ void setup() {
   Serial.println("IP address: ");
   Serial.println(WiFi.localIP());
 
-  Serial.println("Starting UDP");
-  udp.begin(udpPort);
+  startUDP();
   Serial.print("Local port: ");
   Serial.println(udp.localPort());
   Serial.print("Expected packagesize:");
@@ -203,12 +204,12 @@ void setup() {
 
   // Initial full black strip push and init.
   blankTime=micros();
-  //strip.Begin();
+  //strip->Begin();
   //for (uint16_t i = 0; i < pixelsPerStrip; i++) {
-  //  strip.SetPixelColor(i, RgbColor(0, 0, 0));
+  //  strip->SetPixelColor(i, RgbColor(0, 0, 0));
   //  ledDataBuffer[i] = RgbColor(0, 0, 0);
   //}
-  //strip.Show();
+  //strip->Show();
   blankTime=micros()-blankTime;
 
   for(int i=0 ; i<framesToMonitor ; i++)  //blank all frames metadata
@@ -257,14 +258,15 @@ void setup() {
   server.on("/mcu_info", HTTP_GET, []() {
     // build javascript-like data
     IPAddress local_ip=WiFi.localIP();
-    rt = "<!doctype html><html><body><h1>Node Settings</h1><ul>";
+    rt = "<!doctype html><html><body><h2>Node Settings</h2><ul>";
     rt += "<li>name: "+deviceName+"</li>";
     rt += "<li>ip: "+String(local_ip[0]) + "." + String(local_ip[1]) + "." + String(local_ip[2]) + "." + String(local_ip[3]) + "</li>";
     rt += "<li>ssid: "+WiFi.SSID() + "</li>";
     rt += "<li>port: "+String(udpPort) + "</li>";
+    rt += "<li>chunk size: " + String(chunkSize) + "</li>";
     rt += "<li>packetsize: "+String(udpPacketSize) + "</li>";
     rt += "<li>pixels per strip: " + String(pixelsPerStrip) + "</li>";
-    rt += "<li>chunk size: " + String(chunkSize) + "</li>";
+    rt += "<li>mA per pixel: " + String(mAPerPixel) + "</li>"; 
     rt += "<li>amps limit: " + String(amps) + "</li>";
     rt += "<li>warm up color: [" + String(InitColor[0]) + ", " + String(InitColor[1]) + ", " + String(InitColor[2]) + "]</li>";
     rt += "</ul></body></html>";
@@ -324,30 +326,42 @@ void setup() {
 
   server.on("/mcu_config", HTTP_POST, []() {
     String updateString = server.arg("plain");  //retrieve body from HTTP POST request
-    if (updateString.indexOf("all") == 0) {
-      updateParameters(16, 3, strlen("all"), "all", updateString);      
-    } else if (updateString.indexOf("pixels_per_strip") == 0) {
+    if (updateString.indexOf("pixels_per_strip") == 0) {
+      Serial.println("Updating pixels");
+      blank();
       updateParameters(8, 1, strlen("pixels_per_strip"), "pixels_per_strip", updateString);
+      startNeoPixelBus();
+      initDisplay();
+      server.send(200,"text/plain", "OK");
     } else if (updateString.indexOf("chunk_size") == 0) {
       updateParameters(8, 1, strlen("chunk_size"), "chunk_size", updateString);
+      setUdpPacketSize();
+      server.send(200,"text/plain", "OK");
     } else if (updateString.indexOf("ma_per_pixel") == 0) {
       updateParameters(8, 1, strlen("ma_per_pixel"), "ma_per_pixel", updateString);
+      initDisplay();
+      server.send(200,"text/plain", "OK");
+    } else if (updateString.indexOf("device_name") == 0) {
+      updateParameters(8, 1, strlen("device_name"), "device_name", updateString);
+      server.send(200,"text/plain", "OK");
+    } else if (updateString.indexOf("amps_limit") == 0) {
+      updateParameters(16, 1, strlen("amps_limit"), "amps_limit", updateString);
+      milliAmpsLimit = amps * 1000;
+      initDisplay();
+      server.send(200,"text/plain", "OK");
+    } else if (updateString.indexOf("udp_streaming_port") == 0) {
+      updateParameters(8, 1, strlen("udp_streaming_port"), "udp_streaming_port", updateString);
+      startUDP();
+      server.send(200,"text/plain", "OK");
+      //blankRestart();
+    } else if (updateString.indexOf("warmup_color") == 0) {
+      updateParameters(16, 3, strlen("warmup_color"), "warmup_color", updateString);
+      initDisplay();
+      server.send(200,"text/plain", "OK");
     } else {
       Serial.println(updateString);
       server.send(422,"text/plain", "INVALID COMMAND");
-      return;
-    }
-    play="blank";
-    streaming=false;
-    frame=0;
-    offset=0;
-    playEffect();
-    streaming=true;
-    server.send(200,"text/plain", "OK");
-    Serial.println(F("Restarting..."));
-    drd.stop();
-    delay(500);
-    WiFi.forceSleepBegin(); wdt_reset(); ESP.restart(); while(1)wdt_reset();
+    }    
    });
   
   // Start the server //MDB
@@ -360,20 +374,20 @@ void blankFrame() {
 
 void paintFrame(RgbColor c) {
   //c=adjustToMaxMilliAmps(c); // do not allow to exceed max current
-  for (uint16_t i = 0; i < pixelsPerStrip; i++) strip.SetPixelColor(i, c);
-  strip.Show();
+  for (uint16_t i = 0; i < pixelsPerStrip; i++) strip->SetPixelColor(i, c);
+  strip->Show();
 };
 
 RgbColor adjustToMaxMilliAmps(RgbColor c) {
-  float ma=20*(c.R+c.G+c.B)/255.0*pixelsPerStrip;
+  float ma= (mAPerPixel/3) * (c.R+c.G+c.B) /255.0 * pixelsPerStrip;//float ma=20*(c.R+c.G+c.B)/255.0*pixelsPerStrip;
   RgbColor r=c;
   if (ma > milliAmpsLimit)  {// need to adjust down
     r.R=c.R*milliAmpsLimit/ma;
     r.G=c.G*milliAmpsLimit/ma;
     r.B=c.B*milliAmpsLimit/ma;
   }
-  // Serial.println("milliAmpsLimit:"+String(milliAmpsLimit)+" ma:"+String(ma));
-  // Serial.println("adjustToMaxMilliAmps :"+String(c.R)+" "+String(c.G)+" "+String(c.B)+" -> "+String(r.R)+" "+String(r.G)+" "+String(r.B));
+   Serial.println("milliAmpsLimit:"+String(milliAmpsLimit)+" ma:"+String(ma));
+   Serial.println("adjustToMaxMilliAmps :"+String(c.R)+" "+String(c.G)+" "+String(c.B)+" -> "+String(r.R)+" "+String(r.G)+" "+String(r.B));
   return r;
 }; 
 
@@ -500,14 +514,14 @@ void getSettings(String params) {
   
   //get total Amps budget
   pos=params.indexOf("AMPS");
-  if(pos>0) Amps=params.substring(pos+1).toInt();
+  if(pos>0) amps=params.substring(pos+1).toInt();
 
   //get module name
   pos=params.indexOf("NAME");
   if(pos>=0) {
     while (params.substring(pos,pos+1)==" ") pos++; //skip spaces
     pos2=params.indexOf(" ",pos);
-    if (pos2>=0) name=params.substring(pos,pos2);
+    if (pos2>=0) deviceName=params.substring(pos,pos2);
   };
   
   //get topology
@@ -690,7 +704,7 @@ void playStreaming() {
           g = packetBuffer[i++];
           b = packetBuffer[i++];
 
-          strip.SetPixelColor(initialOffset+led++, colorGamma.Correct(RgbColor(r, g, b))); // this line uses gamma correction
+          strip->SetPixelColor(initialOffset+led++, colorGamma.Correct(RgbColor(r, g, b))); // this line uses gamma correction
           milliAmpsCounter += (r + g + b); // increment our milliamps counter accordingly for use later.
         }
       }
@@ -752,8 +766,8 @@ void playStreaming() {
       // and scale brightness if we need to.
       
       if(millisMultiplier!=255)  //dim LEDs only if required
-        strip.SetBrightness(millisMultiplier); // this new brightness control method was added to lib recently, affects entire strip at once.
-      strip.Show();   // write all the pixels out
+        strip->SetBrightness(millisMultiplier); // this new brightness control method was added to lib recently, affects entire strip at once.
+      strip->Show();   // write all the pixels out
       lastStreamingFrame=millis();
       milliAmpsCounter = 0; // reset the milliAmpsCounter for the next frame.
 
@@ -943,61 +957,89 @@ void huehsl(HslColor hsl1, HslColor hsl2, int frames, int times) {
   return;
 }
 
-void stringToIntArray(char s[], byte slen, uint16_t a[], byte alen) {
-  char numbuf[3];
-  for (byte j = 0, i = 0, p = 0; j < slen; j++) {
-    if (s[j] == ' ') continue;
-    if (isdigit(s[j])) {
-      do {
-        if (i < 3) {
-          numbuf[i] = s[j];
-          i++;
-          j++;
-        }
-        else {
-          server.send(422,"text/plain", "PARAMETER OUT OF RANGE");
-          return;
-        }
-      } while(isdigit(s[j]));
-      if (p < alen) {
-        numbuf[i] = '\0';
-        a[p] = atoi(numbuf);
-        p++;
-        i = 0;
-      }
-      else {
-        server.send(422,"text/plain", "TOO MANY PARAMETERS");
-        return;
-      }
-      if (s[j] == '\0') break;
-    }
+void updateParameters(byte slen, byte pnum, byte commlen, String command, String updateString) {
+  drd.stop();  //Prevents updates from resetting WiFi
+
+  if (command.equals("pixels_per_strip")) {
+    int val = updateString.substring(commlen).toInt();
+    if (val > 1500) server.send(422, "text/plain", "PARAMETERS OUT OF RANGE");
+    else ed.updatePixelsPerStrip(updateString.substring(commlen).toInt());
+  } else if (command.equals("chunk_size")) {
+    ed.updateChunkSize(updateString.substring(commlen).toInt());
+  } else if (command.equals("ma_per_pixel")) {
+    ed.updatemaPerPixel(updateString.substring(commlen).toInt());
+  } else if (command.equals("device_name")) {
+    ed.updateDeviceName(updateString.substring(commlen));
+  } else if (command.equals("amps_limit")) {
+    ed.updateAmps(updateString.substring(commlen).toFloat());
+  } else if (command.equals("udp_streaming_port")) {
+    ed.updateUDPport(updateString.substring(commlen).toInt());
+  } else if (command.equals("warmup_color")) {
+    char str[slen];
+    byte parameters[3];
+    updateString.substring(commlen+1).toCharArray(str, slen);
+    parameters[0] = atoi(strtok(str, " "));
+    parameters[1] = atoi(strtok(NULL, " "));
+    parameters[2] = atoi(strtok(NULL, " "));
+    Serial.print(parameters[0]);Serial.print(parameters[1]);Serial.println(parameters[2]);
+    ed.updateInitColor(parameters);
   }
-  for (byte i = 0; i < alen; i++) {
-    Serial.println(a[i]);
-    if (a[i] == 0 || a[i] > 511) {
-      Serial.print(F("Invalid Input: "));
-      Serial.println(s);
-      server.send(422,"text/plain", "PARAMETERS OUT OF RANGE");
-      return;
-    }
-  }
-  return;
 }
 
-void updateParameters(byte slen, byte pnum, byte commlen, String command, String updateString) {
-  char str[slen];
-  uint16_t * parameters = (uint16_t *)malloc(pnum);
-  updateString.substring(commlen).toCharArray(str, slen);      
-  Serial.println(str);
-  stringToIntArray(str, slen, parameters, pnum);
-  if (command.equals("all"))
-      ed.update(parameters[0], parameters[1], parameters[2]); //Updates parameters located in EEPROM
-  else if (command.equals("pixels_per_strip"))
-      ed.updatePixelsPerStrip(parameters[0]);
-  else if (command.equals("chunk_size"))
-      ed.updateChunkSize(parameters[0]);
-  else if (command.equals("ma_per_pixel"))
-      ed.updatemaPerPixel(parameters[0]);
-  free(parameters);
+void blank() {
+  play="blank";
+  streaming=false;
+  frame=0;
+  offset=0;
+  playEffect();
+}
+
+void blankRestart() {
+  blank();
+  server.send(200,"text/plain", "OK");
+  Serial.println(F("Restarting..."));
+  delay(50);
+  WiFi.forceSleepBegin(); wdt_reset(); ESP.restart(); while(1)wdt_reset();
+}
+
+void startNeoPixelBus() {
+  Serial.println(F("Starting NeoPixelBus"));
+  if (strip) {
+    delete(strip);
+  }
+  if (ledDataBuffer) {
+    free(ledDataBuffer);
+  }
+  strip = new NeoPixelBrightnessBus<NeoGrbFeature, NeoEsp8266Dma800KbpsMethod>(pixelsPerStrip, PixelPin);
+  ledDataBuffer = (RgbColor *)malloc(pixelsPerStrip);
+  delay(5000);
+  strip->Begin();
+  delay(500);
+}
+
+void setUdpPacketSize() {
+  Serial.println(F("Setting UDP packet size"));
+  if (packetBuffer) free(packetBuffer);  
+  udpPacketSize = ((chunkSize*3)+1);
+  packetBuffer = (byte *)malloc(udpPacketSize);//buffer to hold incoming and outgoing packets
+}
+
+void startUDP() {
+  Serial.println(F("Starting UDP"));
+  udp.stop();
+  delay(100);
+  udp.begin(udpPort);
+}
+
+void initDisplay() {  
+  Serial.println(F("Initializaing display"));
+  milliAmpsCounter = 0;
+  millisMultiplier = 0;
+  InitialColor=RgbColor(InitColor[0],InitColor[1],InitColor[2]); 
+  InitialColor=adjustToMaxMilliAmps(InitialColor);
+  for(int i=0;i<=90;i++) {
+    paintFrame(RgbColor(InitialColor.R*i/90.0,InitialColor.G*i/90.0,InitialColor.B*i/90.0));
+    delay(16);
+  };
 }
 
