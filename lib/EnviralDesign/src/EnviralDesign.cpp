@@ -187,10 +187,15 @@ void EnviralDesign::updateMode(uint16_t address) {
 }
 
 boolean EnviralDesign::isWriteMode(uint16_t address) {
-    uint16_t cotime = getStoredTime(address);
-    uint16_t storedTime = getStoredTime(COMPILE_TIME);
+    UINT16_ARRAY storedtime;
+    storedtime.bytes[0] = EEPROM.read(COMPILE_TIME);
+    storedtime.bytes[1] = EEPROM.read(COMPILE_TIME + 1);
     
-    if (cotime == storedTime) {
+    UINT16_ARRAY valtime;
+    valtime.bytes[0] = EEPROM.read(address);
+    valtime.bytes[1] = EEPROM.read(address + 1);
+    
+    if (valtime.num == storedtime.num) {
         return true;
     } else {
         return false;
@@ -198,7 +203,7 @@ boolean EnviralDesign::isWriteMode(uint16_t address) {
 }
 
 void EnviralDesign::setCompile(String cotime) {
-  EEPROM.begin(512);
+  
   char str[16];
   cotime.toCharArray(str, 16);
   char *hr, *mn, *sec;
@@ -211,10 +216,12 @@ void EnviralDesign::setCompile(String cotime) {
   combinetime.num += String(sec).toInt() / 2;
   uint16_t storedtime = getStoredTime(COMPILE_TIME);
   if (combinetime.num != storedtime) {
+    EEPROM.begin(512);
     EEPROM.write(COMPILE_TIME, combinetime.bytes[0]);
     EEPROM.write(COMPILE_TIME + 1, combinetime.bytes[1]);
+    EEPROM.end();
   }
-  EEPROM.end();
+  
 }
 
 uint16_t EnviralDesign::getStoredTime(uint16_t address) {

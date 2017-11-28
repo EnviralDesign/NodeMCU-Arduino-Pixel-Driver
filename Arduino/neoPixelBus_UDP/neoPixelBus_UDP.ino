@@ -10,7 +10,7 @@
 
 #define DRD_TIMEOUT 10
 #define DRD_ADDRESS 0
-#define ARBITRARY 100
+
 DoubleResetDetector drd(DRD_TIMEOUT, DRD_ADDRESS); 
 
 ///////////////////// USER DEFINED VARIABLES START HERE /////////////////////////////
@@ -160,7 +160,7 @@ void setup() {
   Serial.println();
   Serial.println();
   Serial.println(F("Serial started")); 
-  
+
   ed.setCompile(String(__TIME__));
   ed.start();
 
@@ -258,18 +258,27 @@ void setup() {
   server.on("/mcu_info", HTTP_GET, []() {
     // build javascript-like data
     IPAddress local_ip=WiFi.localIP();
-    rt = "<!doctype html><html><body><h2>Node Settings</h2><ul>";
-    rt += "<li>name: "+deviceName+"</li>";
-    rt += "<li>ip: "+String(local_ip[0]) + "." + String(local_ip[1]) + "." + String(local_ip[2]) + "." + String(local_ip[3]) + "</li>";
-    rt += "<li>ssid: "+WiFi.SSID() + "</li>";
-    rt += "<li>port: "+String(udpPort) + "</li>";
-    rt += "<li>chunk size: " + String(chunkSize) + "</li>";
-    rt += "<li>packetsize: "+String(udpPacketSize) + "</li>";
-    rt += "<li>pixels per strip: " + String(pixelsPerStrip) + "</li>";
-    rt += "<li>mA per pixel: " + String(mAPerPixel) + "</li>"; 
-    rt += "<li>amps limit: " + String(amps) + "</li>";
-    rt += "<li>warm up color: [" + String(InitColor[0]) + ", " + String(InitColor[1]) + ", " + String(InitColor[2]) + "]</li>";
-    rt += "</ul></body></html>";
+    rt = "name:"+deviceName;
+    rt += ",";
+    rt += "ip:"+String(local_ip[0]) + "." + String(local_ip[1]) + "." + String(local_ip[2]) + "." + String(local_ip[3]);
+    rt += ",";
+    rt += "ssid:"+WiFi.SSID();
+    rt += ",";
+    rt += "port:"+String(udpPort);
+    rt += ",";
+    rt += "packetsize:"+String(udpPacketSize);
+    /** New Vars
+    rt += ",";
+    rt += "chunksize:"+String(chunkSize);
+    rt += ",";
+    rt += "pixels:"+String(pixelsPerStrip);
+    rt += ",";
+    rt += "mAperpixel:"+String(mAPerPixel);
+    rt += ",";
+    rt += "amps:"+String(amps);
+    rt += ",";
+    rt += "warmupcolor: ["+String(InitColor[0])+", "+String(InitColor[1])+", "+String(InitColor[2]) + ];
+    **/
     server.send(200, "text/html", rt);
   });
 
@@ -327,7 +336,6 @@ void setup() {
   server.on("/mcu_config", HTTP_POST, []() {
     String updateString = server.arg("plain");  //retrieve body from HTTP POST request
     if (updateString.indexOf("pixels_per_strip") == 0) {
-      Serial.println("Updating pixels");
       blank();
       updateParameters(8, 1, strlen("pixels_per_strip"), "pixels_per_strip", updateString);
       startNeoPixelBus();
@@ -963,7 +971,7 @@ void updateParameters(byte slen, byte pnum, byte commlen, String command, String
   if (command.equals("pixels_per_strip")) {
     int val = updateString.substring(commlen).toInt();
     if (val > 1500) server.send(422, "text/plain", "PARAMETERS OUT OF RANGE");
-    else ed.updatePixelsPerStrip(updateString.substring(commlen).toInt());
+    else ed.updatePixelsPerStrip(val);
   } else if (command.equals("chunk_size")) {
     ed.updateChunkSize(updateString.substring(commlen).toInt());
   } else if (command.equals("ma_per_pixel")) {
@@ -1012,13 +1020,11 @@ void startNeoPixelBus() {
   }
   strip = new NeoPixelBrightnessBus<NeoGrbFeature, NeoEsp8266Dma800KbpsMethod>(pixelsPerStrip, PixelPin);
   ledDataBuffer = (RgbColor *)malloc(pixelsPerStrip);
-  delay(5000);
   strip->Begin();
-  delay(500);
+  delay(1); //Prevents strip from restarting device
 }
 
 void setUdpPacketSize() {
-  Serial.println(F("Setting UDP packet size"));
   if (packetBuffer) free(packetBuffer);  
   udpPacketSize = ((chunkSize*3)+1);
   packetBuffer = (byte *)malloc(udpPacketSize);//buffer to hold incoming and outgoing packets
@@ -1032,7 +1038,6 @@ void startUDP() {
 }
 
 void initDisplay() {  
-  Serial.println(F("Initializaing display"));
   milliAmpsCounter = 0;
   millisMultiplier = 0;
   InitialColor=RgbColor(InitColor[0],InitColor[1],InitColor[2]); 
