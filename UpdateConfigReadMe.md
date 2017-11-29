@@ -6,12 +6,20 @@ Command message's are structured like this:
 
 Some actual examples - any one of the lines below are a complete command:
 ```
-all 100 25 60
+device_name MyPixelNode
 pixels_per_strip 80
 chunk_size 40
 ma_per_pixel 120
+udp_streaming_port 3000
+amps_limit 5.0
+warmup_color 80 10 44
 ```
 
 Once you have a command put together as a simple string, you'll send that to your PxlNode as a **POST** command where `plain='argument'` ( *not as raw post data* )
 
-There is an ESP8266 bug where a soft reset peformed after a program flash but before a hard reset will cause the bootloader to hang. All of the mcu_config commands will initiate a soft reset. If you run into this issue, simply push the reset button or power cycle your NodeMCU.See https://github.com/esp8266/Arduino/issues/1017 for more informattion.
+There are a few limitations:
+`device_name` must not contain spaces and is limited to 64 characters.
+`pixels_per_strip` cannot be greater than 1500.
+`chunk_size` cannot be greater than 200.
+`udp_streaming_port` cannot be greater than 65536
+`warmup_color` no value can be greater than 255
