@@ -336,11 +336,13 @@ void setup() {
   server.on("/mcu_config", HTTP_POST, []() {
     String updateString = server.arg("plain");  //retrieve body from HTTP POST request
     if (updateString.indexOf("pixels_per_strip") == 0) {
+      Serial.println("Updating");
       blank();
       updateParameters(8, 1, strlen("pixels_per_strip"), "pixels_per_strip", updateString);
+      server.send(200,"text/plain", "OK");
       startNeoPixelBus();
       initDisplay();
-      server.send(200,"text/plain", "OK");
+      //restart();
     } else if (updateString.indexOf("chunk_size") == 0) {
       updateParameters(8, 1, strlen("chunk_size"), "chunk_size", updateString);
       setUdpPacketSize();
@@ -1002,9 +1004,7 @@ void blank() {
   playEffect();
 }
 
-void blankRestart() {
-  blank();
-  server.send(200,"text/plain", "OK");
+void restart() {  
   Serial.println(F("Restarting..."));
   delay(50);
   WiFi.forceSleepBegin(); wdt_reset(); ESP.restart(); while(1)wdt_reset();
@@ -1012,16 +1012,18 @@ void blankRestart() {
 
 void startNeoPixelBus() {
   Serial.println(F("Starting NeoPixelBus"));
+
   if (strip) {
-    delete(strip);
+    delete strip;
   }
+ 
   if (ledDataBuffer) {
     free(ledDataBuffer);
   }
   strip = new NeoPixelBrightnessBus<NeoGrbFeature, NeoEsp8266Dma800KbpsMethod>(pixelsPerStrip, PixelPin);
   ledDataBuffer = (RgbColor *)malloc(pixelsPerStrip);
+  
   strip->Begin();
-  delay(1); //Prevents strip from restarting device
 }
 
 void setUdpPacketSize() {
