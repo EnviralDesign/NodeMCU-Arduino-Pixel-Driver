@@ -391,11 +391,12 @@ void setup() {
     });
 
   server.on("/mcu_config", HTTP_POST, []() {
-    String updateString = server.arg("plain");  //retrieve body from HTTP POST request
     if (server.hasArg("plain") == false) {
       server.send(422, "application/json", "{\"error\":\"HTTP BODY MISSING\"}");
       return;
     }
+    String updateString = server.arg("plain");  //retrieve body from HTTP POST request
+    Serial.println(updateString);
     drd.stop(); //Prevents WiFi wiping during resets
     StaticJsonBuffer<2000> jsonBuffer;
     JsonObject& input = jsonBuffer.parseObject(server.arg("plain"));
@@ -469,7 +470,7 @@ void setup() {
       String rt;
       blank();
       bool initD = false;
-      
+
       if (input["pixels_per_strip"] != NULL) {
         root["pixels_per_strip"] = (updatePixels(input["pixels_per_strip"]) ? "Success" : "Failed");
         startNeoPixelBus();
@@ -486,8 +487,10 @@ void setup() {
         initD = true;
       }
       
-      if (input["device_name"] != NULL ) {
-        root["device_name"] = (updateName(input["device_name"]) ? "Success" : "Failed");
+      if (input["device_name"].success()) {
+        const char* dName = input["device_name"];
+        Serial.println(dName);        
+        root["device_name"] = (updateName(String(dName)) ? "Success" : "Failed");
       }
       
       if (input["amps_limit"] != NULL) {
