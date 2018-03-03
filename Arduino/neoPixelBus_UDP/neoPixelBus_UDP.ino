@@ -1,4 +1,5 @@
 // include some libraries
+#include <ArduinoJson.h>
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
 #include <WiFiUdp.h>
@@ -6,11 +7,16 @@
 #include <NeoPixelAnimator.h>
 #include <WiFiManager.h>
 #include <DoubleResetDetector.h>
+#include "FS.h"
+#include <ESP8266FtpServer.h>
 
 #include <EnviralDesign.h>
 
 #define DRD_TIMEOUT 10
 #define DRD_ADDRESS 0
+
+#define min(a,b) ((a)<(b)?(a):(b))
+#define max(a,b) ((a)>(b)?(a):(b))
 
 DoubleResetDetector drd(DRD_TIMEOUT, DRD_ADDRESS); 
 
@@ -37,10 +43,6 @@ uint16_t udpPort = 2390;
 //Set here the inital RGB color to show on module power up
 byte InitColor[] = {200, 75, 10};
 
-uint16_t imageWidth = 16;
-uint16_t imageHeight = 20;
-uint8_t *imageBuffer;
-
 ///////////////////// USER DEFINED VARIABLES END HERE /////////////////////////////
 
 //maximum numbers of chunks per frame in order to validate we do not receive a wrong index when there are communciation errors
@@ -48,6 +50,9 @@ uint8_t *imageBuffer;
 
 //Interfaces user defined variables with memory stored in EEPROM
 EnviralDesign ed(&pixelsPerStrip, &chunkSize, &mAPerPixel, &deviceName, &amps, &udpPort, InitColor);
+
+//FTP server to store bitmaps
+FtpServer ftpSrv;
 
 #define UDP_PORT_OUT 2391
 #define STREAMING_TIMEOUT 10  //  blank streaming frame after X seconds
@@ -77,6 +82,14 @@ NeoPixelAnimator animations(1); //Number of animations
 
 NeoVerticalSpriteSheet<NeoBufferMethod<NeoGrbFeature>> *spriteSheet;
 
+//Variables used by Sprite Object
+uint16_t imageWidth = 16;
+uint16_t imageHeight = 20;
+uint32_t fileAddressPixels = 0;
+uint32_t sizeRow = 0;
+uint8_t bytesPerPixel = 0;
+bool bottomToTop;
+uint8_t *imageBuffer;
 uint16_t indexSprite;
 bool playingSprite = false;
 
@@ -155,10 +168,7 @@ int frames=1;
 int offset=0;
 volatile int frame=0;
 
-String rt;
-
 WiFiManager wifiManager;
-
 
 void setup() {
   if (drd.detectDoubleReset()) { //if user double clicks reset button, then reset wifisetting
@@ -172,9 +182,9 @@ void setup() {
   Serial.println();
   Serial.println(F("Serial started")); 
 
-  ed.setCompile(String(__TIME__));
+  ed.setCompile(String(__TIME__));    //Compiling erases variables previously changed over the network
   ed.start();
-
+ 
   setUdpPacketSize();
   
   //Initializes NeoPixelBus
@@ -205,6 +215,15 @@ void setup() {
   Serial.println("IP address: ");
   Serial.println(WiFi.localIP());
 
+  //SPIFFS Setup  FTP Server
+  if (!SPIFFS.begin()) {
+    Serial.println(F("Failed to mount file system"));
+    while(1) {
+      delay(1000);
+    }
+  }
+  ftpSrv.begin("esp8266", "esp8266");  //Username and password
+
   startUDP();
   Serial.print("Local port: ");
   Serial.println(udp.localPort());
@@ -234,7 +253,7 @@ void setup() {
   server.on("/survey", HTTP_GET, []() {
     // build Javascript code to draw SVG wifi graph
     IPAddress local_ip=WiFi.localIP();
-    rt="<!doctype html><html><body>";
+    String rt="<!doctype html><html><body>";
 //    rt+="Connected to:"+String(ssid)+"<br>IP address:"+String(local_ip[0]) + "." + String(local_ip[1]) + "." + String(local_ip[2]) + "." + String(local_ip[3]);
     rt+="Connected to:"+WiFi.SSID()+"<br>IP address:"+String(local_ip[0]) + "." + String(local_ip[1]) + "." + String(local_ip[2]) + "." + String(local_ip[3]);
     rt+="<br>port:"+String(udpPort)+"<br>Expected packet size:"+String(udpPacketSize);
@@ -260,7 +279,7 @@ void setup() {
   server.on("/getstatus", HTTP_GET, []() {
     // build Javascript code to draw SVG wifi graph
     IPAddress local_ip=WiFi.localIP();
-    rt="<!doctype html><html><body>";
+    String rt="<!doctype html><html><body>";
     //rt+="Connected to:"+String(ssid)+"<br>IP address:"+String(local_ip[0]) + "." + String(local_ip[1]) + "." + String(local_ip[2]) + "." + String(local_ip[3]);
     rt+="Connected to:"+WiFi.SSID()+"<br>IP address:"+String(local_ip[0]) + "." + String(local_ip[1]) + "." + String(local_ip[2]) + "." + String(local_ip[3]);
     rt+="<br>port:"+String(udpPort)+"<br>Expected packet size:"+String(udpPacketSize);
@@ -272,7 +291,9 @@ void setup() {
   server.on("/mcu_info", HTTP_GET, []() {
     // build javascript-like data
     IPAddress local_ip=WiFi.localIP();
-    rt = "name:"+deviceName;
+    FSInfo fs_info;
+
+    String rt = "name:"+deviceName;
     rt += ",";
     rt += "ip:"+String(local_ip[0]) + "." + String(local_ip[1]) + "." + String(local_ip[2]) + "." + String(local_ip[3]);
     rt += ",";
@@ -281,23 +302,44 @@ void setup() {
     rt += "port:"+String(udpPort);
     rt += ",";
     rt += "packetsize:"+String(udpPacketSize);
-    /** New Vars
-    rt += ",";
-    rt += "chunksize:"+String(chunkSize);
-    rt += ",";
-    rt += "pixels:"+String(pixelsPerStrip);
-    rt += ",";
-    rt += "mAperpixel:"+String(mAPerPixel);
-    rt += ",";
-    rt += "amps:"+String(amps);
-    rt += ",";
-    rt += "warmupcolor: ["+String(InitColor[0])+", "+String(InitColor[1])+", "+String(InitColor[2]) + ];
-    **/
     server.send(200, "text/html", rt);
   });
 
+  server.on("/mcu_json", HTTP_GET, []() {
+    // build json data
+    IPAddress local_ip=WiFi.localIP();
+    String rt;
+    FSInfo fs_info;
+    StaticJsonBuffer<1000> jsonBuffer;
+    JsonObject& root = jsonBuffer.createObject();
+    root["device_name"] = deviceName;
+    root["ip"] = String(local_ip[0]) + "." + String(local_ip[1]) + "." + String(local_ip[2]) + "." + String(local_ip[3]);
+    root["ssid"] = String(WiFi.SSID());
+    root["udp_streaming_port"] = udpPort;
+    root["packetsize"] = udpPacketSize;
+    root["chunk_size"] = chunkSize;
+    root["pixels_per_strip"] = pixelsPerStrip;
+    root["ma_per_pixel"] = mAPerPixel;
+    root["amps_limit"] = amps;
+    JsonArray& wcArr = root.createNestedArray("warmup_color");
+    wcArr.add(InitColor[0]);
+    wcArr.add(InitColor[1]);
+    wcArr.add(InitColor[2]);
+    if (SPIFFS.info(fs_info)) {
+      
+      root["totalBytes"] = fs_info.totalBytes;
+      root["usedBytes"] = fs_info.usedBytes;
+      root["blockSize"] = fs_info.blockSize;
+      root["pageSize"] = fs_info.pageSize;
+      root["maxOpenFiles"] = fs_info.maxOpenFiles;
+      root["maxPathLength"] = fs_info.maxPathLength;
+    }
+    root.printTo(rt);
+    server.send(200, "application/json", rt);
+  });
+
   server.on("/getframes", HTTP_GET, []() {
-    rt="<html><body><table>";
+    String rt="<html><body><table>";
     rt+="<tr style=\"border:1px solid black\"><th>Frame<br>#</th><th>Action<br>byte</td><th>Arrived At<br>[µS]</th><th>Packet Size<br>[bytes]</th><th>Power<br>[mA]</th><th>Power<br>Adjustment</th><th>Packet CPU<br>time [µS]</th><th>Frame CPU<br>time [µS]</th></tr>";
     long acum=0;
     long lastFrame=0;
@@ -350,43 +392,130 @@ void setup() {
 
   server.on("/mcu_config", HTTP_POST, []() {
     String updateString = server.arg("plain");  //retrieve body from HTTP POST request
-    if (updateString.indexOf("pixels_per_strip") == 0) {
-      Serial.println("Updating");
+    if (server.hasArg("plain") == false) {
+      server.send(422, "application/json", "{\"error\":\"HTTP BODY MISSING\"}");
+      return;
+    }
+    drd.stop(); //Prevents WiFi wiping during resets
+    StaticJsonBuffer<2000> jsonBuffer;
+    JsonObject& input = jsonBuffer.parseObject(server.arg("plain"));
+    if (!input.success()) {     //Not a well formed json. Checking for regular command
+      if (updateString.length() > 64) {
+        server.send(422, "application/json", "{\"error\":\"COMMAND TOO LONG\"}");
+        return;
+      }
+      char str[64];
+      updateString.toCharArray(str, 64);
+      String cmd = strtok(str, " ");
+      if (cmd.indexOf("pixels_per_strip") == 0) {
+        Serial.println("Updating");
+        blank();
+        int val = String(strtok(NULL, " ")).toInt();
+        
+        if (!updatePixels(val)) {
+          server.send(422, "application/json", "{\"error\":\"PARAMETER OUT OF RANGE\",\"pixels_per_strip\":\"Failed\"}");
+          return;
+        }
+        server.send(200,"application/json", "{\"pixels_per_strip\":\"Success\"}");
+        startNeoPixelBus();
+        initDisplay();
+        //restart();  //restart no longer needed for pixel update
+        
+      } else if (cmd.indexOf("chunk_size") == 0) {
+        int val = String(strtok(NULL, " ")).toInt();
+        if (!updateChunk(val)) return;
+        setUdpPacketSize();
+        server.send(200,"application/json", "{\"chunk_size\":\"Success\"}");
+        
+      } else if (cmd.indexOf("ma_per_pixel") == 0) {
+        int val = String(strtok(NULL, " ")).toInt();
+        if (!updateMA(val)) return;
+        initDisplay();
+        server.send(200,"application/json", "{\"ma_per_pixel\":\"Success\"}");
+        
+      } else if (cmd.indexOf("device_name") == 0) {
+        if (!updateName(String(strtok(NULL, " ")))) return;
+        server.send(200,"application/json", "{\"device_name\":\"Success\"}");
+        
+      } else if (cmd.indexOf("amps_limit") == 0) {
+        float val = String(strtok(NULL, " ")).toFloat();
+        if (!updateAmps(val)) return;
+        milliAmpsLimit = amps * 1000;
+        initDisplay();
+        server.send(200,"application/json", "{\"amps_limit\":\"Success\"}");
+        
+      } else if (cmd.indexOf("udp_streaming_port") == 0) {
+        int val = String(strtok(NULL, " ")).toInt();
+        if (!updateUDP(val)) return;
+        startUDP();
+        server.send(200,"application/json", "{\"udp_streaming_port\":\"Success\"}");
+        //blankRestart();
+        
+      } else if (cmd.indexOf("warmup_color") == 0) {
+        byte v1 = String(strtok(NULL, " ")).toInt();
+        byte v2 = String(strtok(NULL, " ")).toInt();
+        byte v3 = String(strtok(NULL, " ")).toInt();
+        updateWarmUp(v1, v2, v3);
+        initDisplay();
+        server.send(200,"application/json", "{\"warmup_color\":\"Success\"}");
+        
+      } else {
+        Serial.println(cmd);
+        server.send(422,"application/json", "{\"error\":\"INVALID COMMAND\"}");
+      } 
+      
+    } else {  //JSON detected
+      JsonObject& root = jsonBuffer.createObject();
+      String rt;
       blank();
-      updateParameters(8, 1, strlen("pixels_per_strip"), "pixels_per_strip", updateString);
-      server.send(200,"text/plain", "OK");
-      startNeoPixelBus();
-      initDisplay();
-      //restart();
-    } else if (updateString.indexOf("chunk_size") == 0) {
-      updateParameters(8, 1, strlen("chunk_size"), "chunk_size", updateString);
-      setUdpPacketSize();
-      server.send(200,"text/plain", "OK");
-    } else if (updateString.indexOf("ma_per_pixel") == 0) {
-      updateParameters(8, 1, strlen("ma_per_pixel"), "ma_per_pixel", updateString);
-      initDisplay();
-      server.send(200,"text/plain", "OK");
-    } else if (updateString.indexOf("device_name") == 0) {
-      updateParameters(8, 1, strlen("device_name"), "device_name", updateString);
-      server.send(200,"text/plain", "OK");
-    } else if (updateString.indexOf("amps_limit") == 0) {
-      updateParameters(16, 1, strlen("amps_limit"), "amps_limit", updateString);
-      milliAmpsLimit = amps * 1000;
-      initDisplay();
-      server.send(200,"text/plain", "OK");
-    } else if (updateString.indexOf("udp_streaming_port") == 0) {
-      updateParameters(8, 1, strlen("udp_streaming_port"), "udp_streaming_port", updateString);
-      startUDP();
-      server.send(200,"text/plain", "OK");
-      //blankRestart();
-    } else if (updateString.indexOf("warmup_color") == 0) {
-      updateParameters(16, 3, strlen("warmup_color"), "warmup_color", updateString);
-      initDisplay();
-      server.send(200,"text/plain", "OK");
-    } else {
-      Serial.println(updateString);
-      server.send(422,"text/plain", "INVALID COMMAND");
-    }    
+      bool initD = false;
+      
+      if (input["pixels_per_strip"] != NULL) {
+        root["pixels_per_strip"] = (updatePixels(input["pixels_per_strip"]) ? "Success" : "Failed");
+        startNeoPixelBus();
+        initD = true;
+      }
+      
+      if (input["chunk_size"] != NULL) {
+        root["chunk_size"] = (updateChunk(input["chunk_size"]) ? "Success" : "Failed");
+        setUdpPacketSize();
+      }
+      
+      if (input["ma_per_pixel"] != NULL) {
+        root["ma_per_pixel"] = (updateMA(input["ma_per_pixel"]) ? "Success" : "Failed");
+        initD = true;
+      }
+      
+      if (input["device_name"] != NULL ) {
+        root["device_name"] = (updateName(input["device_name"]) ? "Success" : "Failed");
+      }
+      
+      if (input["amps_limit"] != NULL) {
+        root["amps_limit"] = (updateAmps(input["amps_limit"]) ? "Success" : "Failed");
+        milliAmpsLimit = amps * 1000;
+        initD = true;
+      }
+      
+      if (input["udp_streaming_port"] != NULL) {
+        root["udp_streaming_port"] = (updateUDP(input["udp_streaming_port"]) ? "Success" : "Failed");
+        startUDP();
+      }
+      
+      if (input["warmup_color"] != NULL ) {
+        //byte arr[3] = input["warmup_color"];
+        //char arr[16];
+        //temp.toCharArray(arr, 16);
+        byte v1 = input["warmup_color"][0];
+        byte v2 = input["warmup_color"][1];
+        byte v3 = input["warmup_color"][2];
+        root["warmup_color"] = (updateWarmUp(v1, v2, v3) ? "Success" : "Failed");
+        initD = true;
+      }
+      root.printTo(rt);
+      server.send(200, "application/json", rt);
+      if (initD) initDisplay();
+    }
+    
    });
   
   // Start the server //MDB
@@ -598,16 +727,12 @@ void loop() { //main program loop
     };
     delay(16);
   };
+  ftpSrv.handleFTP();
   server.handleClient();
 }
 
 boolean playEffect() {
-  if(getCommand(play).equals("SPRITE")) {
-    playingSprite = true;
-    indexSprite = 0;
-    animations.StartAnimation(0, 60, LoopAnimUpdate);
-    return true;
-  }
+  
   if(frame==0) {  // frame zero means to go get a command line from the HTTP request body
     String line,params;
     int pos,RGBcolors,HSBcolors,HSLcolors;
@@ -620,7 +745,8 @@ boolean playEffect() {
       };
       if(byte(play[offset])==10) offset++; // skip line feed
 
-      command=getCommand(line);  //Parse all parameters 
+      command=getCommand(line);  //Parse all parameters
+      if (command.equals("SPRITE")) return handleSprite();
       params=getParams(line);
       // Get RBG colors
       RGBcolors=getColors(params,"RGB");
@@ -991,38 +1117,50 @@ void huehsl(HslColor hsl1, HslColor hsl2, int frames, int times) {
   return;
 }
 
-void updateParameters(byte slen, byte pnum, byte commlen, String command, String updateString) {
-  drd.stop();  //Prevents updates from resetting WiFi
-
-  if (command.equals("pixels_per_strip")) {
-    int val = updateString.substring(commlen).toInt();
-    if (val > 1500) server.send(422, "text/plain", "PARAMETERS OUT OF RANGE");
-    else ed.updatePixelsPerStrip(val);
-  } else if (command.equals("chunk_size")) {
-    ed.updateChunkSize(updateString.substring(commlen).toInt());
-  } else if (command.equals("ma_per_pixel")) {
-    ed.updatemaPerPixel(updateString.substring(commlen).toInt());
-  } else if (command.equals("device_name")) {
-    ed.updateDeviceName(updateString.substring(commlen));
-  } else if (command.equals("amps_limit")) {
-    ed.updateAmps(updateString.substring(commlen).toFloat());
-  } else if (command.equals("udp_streaming_port")) {
-    ed.updateUDPport(updateString.substring(commlen).toInt());
-  } else if (command.equals("warmup_color")) {
-    char str[slen];
-    byte parameters[3];
-    updateString.substring(commlen+1).toCharArray(str, slen);
-    parameters[0] = atoi(strtok(str, " "));
-    parameters[1] = atoi(strtok(NULL, " "));
-    parameters[2] = atoi(strtok(NULL, " "));
-    Serial.print(parameters[0]);Serial.print(parameters[1]);Serial.println(parameters[2]);
-    ed.updateInitColor(parameters);
+bool updatePixels(int val) {
+  if (val > 1500) {
+    return false;
+  } else {
+    ed.updatePixelsPerStrip(val);
+    return true;
   }
+}
+
+bool updateChunk(int val) {
+  ed.updateChunkSize(val);
+  return true;
+}
+
+bool updateMA(int val) {
+  ed.updatemaPerPixel(val);
+  return true;
+}
+
+bool updateName(String val) {
+  ed.updateDeviceName(val);
+  return true;
+}
+
+bool updateAmps(float val) {
+  ed.updateAmps(val);
+  return true;
+}
+
+bool updateUDP(int val) {
+  ed.updateUDPport(val);
+  return true;
+}
+
+bool updateWarmUp(byte v1, byte v2, byte v3) {
+  byte parameters[3] = {v1, v2, v3};
+  ed.updateInitColor(parameters);
+  return true;
 }
 
 void blank() {
   play="blank";
   streaming=false;
+  playingSprite=false;
   frame=0;
   offset=0;
   playEffect();
@@ -1088,7 +1226,149 @@ void LoopAnimUpdate(const AnimationParam& param) {
   }  
 }
 
-void spriteSetup() {
+bool readBitmapInfo(File _file) {  //Extracts metadata from BitMap File
+  BitmapFileHeader bmpHeader;
+  BitmapInfoHeader bmpInfoHeader;
+  size_t result;
+
+  result = _file.read((uint8_t*)(&bmpHeader), sizeof(bmpHeader));
+
+  if (result != sizeof(bmpHeader) ||
+      bmpHeader.FileId != c_BitmapFileId ||
+      bmpHeader.FileSize != _file.size()) {
+        goto error;
+  }
+
+  result = _file.read((uint8_t*)(&bmpInfoHeader), sizeof(bmpInfoHeader));
+
+  if (result != sizeof(bmpInfoHeader) ||
+      result != bmpInfoHeader.Size ||
+      1 != bmpInfoHeader.Planes ||
+      BI_Rgb != bmpInfoHeader.Compression) {
+        goto error;
+  }
+
+  if(!(24 == bmpInfoHeader.BitsPerPixel ||    //RGB
+       32 == bmpInfoHeader.BitsPerPixel)) {  //RGBW
+        goto error;
+  }
+
+  imageWidth = abs(bmpInfoHeader.Width);
+  imageHeight = abs(bmpInfoHeader.Height);
+  fileAddressPixels = bmpHeader.PixelAddress;
+  bottomToTop = (bmpInfoHeader.Height > 0);
+  sizeRow = (bmpInfoHeader.BitsPerPixel * imageWidth + 31) / 32 * 4;
+  bytesPerPixel = bmpInfoHeader.BitsPerPixel / 8;
+  
+  return true;
+  error:
+    fileAddressPixels = 0;
+    imageWidth = 0;
+    imageHeight = 0;
+    sizeRow = 0;
+    bytesPerPixel = 0;
+    return false;
+}
+
+bool convertBitmap(File f, uint16_t xIn, uint16_t yIn) { //Transfers bytes from bitmap to memory
+  free(imageBuffer);
+  uint16_t xFile = xIn, yFile = yIn;
+  
+  imageBuffer = (uint8_t *)malloc(bytesPerPixel * xIn * yIn);
+  int bufferCount = 0;
+  for (uint16_t y = 0; y < imageHeight; y++) {
+    if (xIn >= imageWidth) xFile = imageWidth - 1;
+    if (yIn + y >= imageHeight) yFile = imageHeight -1 + y;
+    if (seek(f, xFile, yFile)) {
+      for (int16_t x = 0; x < xIn; x++) {
+        if (xFile < imageWidth) {
+          uint8_t bgr[4];
+          if (f.read(bgr, bytesPerPixel) != bytesPerPixel) {
+            imageBuffer[bufferCount++] = 0;
+            imageBuffer[bufferCount++] = 0;
+            imageBuffer[bufferCount++] = 0;
+            if (bytesPerPixel == 4) imageBuffer[bufferCount++] = 0;  //Write zeros
+          } else {
+            imageBuffer[bufferCount++] = bgr[0];
+            imageBuffer[bufferCount++] = bgr[1];
+            imageBuffer[bufferCount++] = bgr[2];
+            if (bytesPerPixel == 4) imageBuffer[bufferCount++] = bgr[3];
+            xFile++;
+          }          
+        }
+      }
+    }
+  }
+  
+}
+
+bool seek(File f, uint16_t x, uint16_t y) { //Used from bitmap data extraction
+  if (bottomToTop) {
+    y = (imageHeight - 1) - y;
+  }
+  uint32_t pos = y * sizeRow + x * bytesPerPixel;
+  pos += fileAddressPixels;
+  return f.seek(pos, SeekCur);
+}
+
+bool handleSprite() { //SPRITE filename.bmp 4 3
+  blank();
+  char buf[64];
+  play.toCharArray(buf, 64);
+  strtok(buf, " ");     //Discards command SPRITE
+  String filename = String(strtok(NULL, " "));
+  if (filename.length() < 3) {  //If filename is too short just play whats in memory
+    playingSprite = true;
+    indexSprite = 0;
+    animations.StartAnimation(0, 60, LoopAnimUpdate);
+    return true;  
+  }
+  if (!filename.endsWith(".bmp")) {
+    Serial.println(F("must be a bmp file"));
+    return false;
+  }
+  
+  File f = SPIFFS.open(filename, "r");
+  if (!f) {
+    Serial.println(F("file open failed"));
+    return false;
+  }
+  if (!readBitmapInfo(f)) { //If loading failed play what's in memory
+    Serial.println(F("Failed to get bitmap info"));
+    f.close();
+    playingSprite = true;
+    indexSprite = 0;
+    animations.StartAnimation(0, 60, LoopAnimUpdate);
+    return true;  
+  }
+  char* xstr = strtok(NULL, " "); //Look for x an y limits
+  char* ystr = strtok(NULL, " ");
+  uint16_t x;
+  uint16_t y;
+  if (xstr) {
+    x = String(xstr).toInt();
+    if (ystr) {
+      y = String(ystr).toInt();
+    }
+    else {
+      y = min(pixelsPerStrip/x, imageHeight);
+    }
+  } else {
+    y = min(pixelsPerStrip, imageHeight);   //default x and y limits
+    x = max(pixelsPerStrip / imageHeight, 1);
+  }
+  
+  if (!convertBitmap(f, x, y)) {
+    Serial.println(F("Failed to convert bitmap into memory"));
+  }
+  f.close();
+  playingSprite = true;
+  indexSprite = 0;
+  animations.StartAnimation(0, 60, LoopAnimUpdate);
+  return true;  
+}
+
+void spriteSetup() {  //Loads default sprite object
   imageBuffer = (uint8_t *)malloc(3 * imageWidth * imageHeight);
   uint8_t tempBuffer[] = {  // (16 x 20) GRB in Hexadecimal
         0x00, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
