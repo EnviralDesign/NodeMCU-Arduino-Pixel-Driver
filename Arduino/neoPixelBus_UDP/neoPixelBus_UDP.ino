@@ -1314,12 +1314,185 @@ bool seek(File f, uint16_t x, uint16_t y) { //Used from bitmap data extraction
   return f.seek(pos, SeekCur);
 }
 
-bool handleSprite() { //SPRITE filename.bmp 4 3
+bool spriteParse() {
+  char buf[256];
+  char *tok;
+
+  //Make sure all arguments are present
+  int rgbCount = 0;
+  int sCount = 0;
+  int tCount = 0;
+  int fCount = 0;
+  int xCount = 0;
+  int yCount = 0;  
+  int i = 0;
+  int commaCount = 0;
+  play.toCharArray(buf, 256);
+
+  tok = strtok(buf, " ");  //Assumes SPRITE
+
+  while (tok = strtok(NULL, " ")) {
+    char c = tok[0];
+    switch(c) {
+      case 'r':
+        if (tok[1] != 'g' || tok[2] != 'b') return false;
+        i = 3;
+        commaCount = 0;
+        while (tok[i] != '\0' && i < 14) {
+          if (isDigit(tok[i])) {
+            i++;
+          } else if (tok[i] == ',') {
+            commaCount++;
+            i++;
+          } else {
+            return false;
+          }          
+        }
+        if (commaCount != 2) return false;
+        rgbCount++;
+        break;
+      case 's':
+        if (tok[1] == '\'') {
+          i = 2;
+          while (tok[i] != '\'' && i < 63) {
+            switch (tok[i]) {
+              case '\0':
+              case '\\':
+              case '/':
+              case ':':
+              case '*':
+              case '"':
+              case '<':
+              case '>':
+              case '|':
+              case '?':
+                return false;
+              default:
+                i++;
+            }
+          }
+          if (tok[i] != '\'' || i < 3) return false;
+        } else if (!checkDigits(1, tok)) {
+          return false;
+        }
+        sCount++;
+        break;
+      case 't':
+        if (!checkDigits(1, tok)) return false;
+        tCount++;
+        break;
+      case 'f':
+        if (!checkDigits(1, tok)) return false;
+        fCount++;
+        break;
+      case 'x':
+        if (!checkDigits(1, tok)) return false;
+        xCount++;
+        break;
+      case 'y':
+        if (!checkDigits(1, tok)) return false;
+        yCount++;
+        break;
+      default:
+        return false;
+    }
+  }
+
+  if (rgbCount == 2 && sCount == 1 && tCount == 1 && fCount == 1 && xCount == 1 && yCount == 1) return true;
+  else return false;
+}
+
+bool checkDigits(int index, char* arr) {
+  while (arr[index] != '\0' && index < 63) {
+    if (!isDigit(arr[index])) return false;
+    index++;
+  }
+  return true;
+}
+
+int getDigits(int index, char* arr) {
+  char temp[12];
+  int i = 0;
+  while (arr[i+index] != '\0' && i < 11) {
+    temp[i] = arr[i+index];
+    i++;
+  }
+  temp[i] = '\0';
+  return atoi(temp);
+}
+
+bool handleSprite() { //SPRITE rgb255,0,0 rgb0,0,255 t10 f30 s1 x4 y3 
+                      //SPRITE rgb255,0,0 rgb0,0,255 t10 f30 s'filename.bmp' x8 y32
   blank();
-  char buf[64];
-  play.toCharArray(buf, 64);
-  strtok(buf, " ");     //Discards command SPRITE
-  String filename = String(strtok(NULL, " "));
+  if (!spriteParse()) {
+    return false;
+  }
+  char buf[256];
+  char *arg;
+
+  //Incoming Parameters
+  String filename = "";
+  byte colorStart[3]  = {0, 0, 0};
+  byte colorEnd[3] = {0, 0, 0};
+  bool firstColor = true;
+  uint32_t timeRepeats = 0;
+  uint32_t numFrames = 0;
+  uint8_t fileNum = 0;
+  uint16_t x = 0;
+  uint16_t y = 0;
+  int i = 0;
+  play.toCharArray(buf, 256);
+  arg = strtok(buf, " ");     //Discards command SPRITE
+
+  while (arg = strtok(NULL, " ")) {
+    char c = arg[0];
+    switch (c) {
+      case 'r':
+        char temp[12];
+        i = 0;
+        while (arg[3+i] != '\0' && i < 11) {
+          temp[i] = arg[3+i];
+          i++;
+        }
+        temp[i] = '\0';
+        
+        if (firstColor) {
+          colorStart[0] = atoi(strtok(temp, ","));
+          colorStart[1] = atoi(strtok(NULL, ","));
+          colorStart[2] = atoi(strtok(NULL, ","));
+        } else {
+          colorEnd[0] = atoi(strtok(temp, ","));
+          colorEnd[1] = atoi(strtok(NULL, ","));
+          colorEnd[2] = atoi(strtok(NULL, ","));
+        }
+        break;
+      case 't':
+        timeRepeats = getDigits(1, arg);
+        break;
+      case 'f':
+        numFrames = getDigits(1, arg);
+        break;
+      case 's':
+        if (arg[1] == '\'') {
+          strtok(arg, "'"); //Trims "s'"
+          filename = String(strtok(NULL, "'")); //Gets filename up to next '
+        } else {
+          fileNum = getDigits(1, arg);
+        }
+        break;
+      case 'x':
+        x = getDigits(1, arg);
+        break;
+      case 'y':
+        y = getDigits(1, arg);
+        break;
+      default:
+        return false;
+    }
+    
+  }
+  
+  
   if (filename.length() < 3) {  //If filename is too short just play whats in memory
     playingSprite = true;
     indexSprite = 0;
@@ -1346,8 +1519,7 @@ bool handleSprite() { //SPRITE filename.bmp 4 3
   }
   char* xstr = strtok(NULL, " "); //Look for x an y limits
   char* ystr = strtok(NULL, " ");
-  uint16_t x;
-  uint16_t y;
+
   if (xstr) {
     x = String(xstr).toInt();
     if (ystr) {
