@@ -7,7 +7,7 @@
 #include <NeoPixelAnimator.h>
 #include <WiFiManager.h>
 #include <DoubleResetDetector.h>
-#include "FS.h"
+#include "FS.h"ftp
 #include <ESP8266FtpServer.h>
 
 #include <EnviralDesign.h>
@@ -87,7 +87,7 @@ uint16_t imageWidth = 16;
 uint16_t imageHeight = 20;
 uint32_t fileAddressPixels = 0;
 uint32_t sizeRow = 0;
-uint8_t bytesPerPixel = 0;
+uint8_t bytesPerPixel = 3;
 bool bottomToTop;
 uint8_t *imageBuffer;
 uint16_t indexSprite;
@@ -735,7 +735,7 @@ void loop() { //main program loop
 }
 
 boolean playEffect() {
-  
+  Serial.println(play);
   if(frame==0) {  // frame zero means to go get a command line from the HTTP request body
     String line,params;
     int pos,RGBcolors,HSBcolors,HSLcolors;
@@ -1301,8 +1301,38 @@ bool convertBitmap(File f, uint16_t xIn, uint16_t yIn) { //Transfers bytes from 
         }
       }
     }
-  }
+  }  
+}
+
+bool loadSpriteFile(File f, uint16_t xIn, uint16_t yIn) {
+  free(imageBuffer);
+  uint16_t xFile = xIn, yFile = yIn;
   
+  imageBuffer = (uint8_t *)malloc(bytesPerPixel * xIn * yIn);
+  int bufferCount = 0;
+  for (uint16_t y = 0; y < imageHeight; y++) {
+    if (xIn >= imageWidth) xFile = imageWidth - 1;
+    if (yIn + y >= imageHeight) yFile = imageHeight -1 + y;
+    if (seek(f, xFile, yFile)) {
+      for (int16_t x = 0; x < xIn; x++) {
+        if (xFile < imageWidth) {
+          uint8_t bgr[4];
+          if (f.read(bgr, bytesPerPixel) != bytesPerPixel) {
+            imageBuffer[bufferCount++] = 0;
+            imageBuffer[bufferCount++] = 0;
+            imageBuffer[bufferCount++] = 0;
+            if (bytesPerPixel == 4) imageBuffer[bufferCount++] = 0;  //Write zeros
+          } else {
+            imageBuffer[bufferCount++] = bgr[0];
+            imageBuffer[bufferCount++] = bgr[1];
+            imageBuffer[bufferCount++] = bgr[2];
+            if (bytesPerPixel == 4) imageBuffer[bufferCount++] = bgr[3];
+            xFile++;
+          }
+        }
+      }
+    }
+  }
 }
 
 bool seek(File f, uint16_t x, uint16_t y) { //Used from bitmap data extraction
@@ -1317,7 +1347,8 @@ bool seek(File f, uint16_t x, uint16_t y) { //Used from bitmap data extraction
 bool spriteParse() {
   char buf[256];
   char *tok;
-
+  Serial.print("Sprite to parse: ");
+  Serial.println(play);
   //Make sure all arguments are present
   int rgbCount = 0;
   int sCount = 0;
@@ -1423,124 +1454,123 @@ int getDigits(int index, char* arr) {
 
 bool handleSprite() { //SPRITE rgb255,0,0 rgb0,0,255 t10 f30 s1 x4 y3 
                       //SPRITE rgb255,0,0 rgb0,0,255 t10 f30 s'filename.bmp' x8 y32
-  blank();
   if (!spriteParse()) {
+    Serial.println("Sprite failed to parse");
     return false;
   }
   char buf[256];
-  char *arg;
+  char *tok;
 
+  bytesPerPixel = 3; //Set bytes per pixel to 3 as default
   //Incoming Parameters
-  String filename = "";
+  String filename = "/";
   byte colorStart[3]  = {0, 0, 0};
   byte colorEnd[3] = {0, 0, 0};
   bool firstColor = true;
   uint32_t timeRepeats = 0;
   uint32_t numFrames = 0;
-  uint8_t fileNum = 0;
+  int8_t fileNum = -1;
   uint16_t x = 0;
   uint16_t y = 0;
   int i = 0;
+  int tI = 0;
+  int cI = 0;
+  Serial.print("Sprite to tokenize");Serial.println(play);
   play.toCharArray(buf, 256);
-  arg = strtok(buf, " ");     //Discards command SPRITE
-
-  while (arg = strtok(NULL, " ")) {
-    char c = arg[0];
+  tok = strtok(buf, " ");     //Discards command SPRITE
+  Serial.print("First token: ");Serial.println(tok);
+  while (tok = strtok(NULL, " ")) {
+    Serial.print("Next token: ");Serial.println(tok);
+    char c = tok[0];
     switch (c) {
       case 'r':
         char temp[12];
         i = 0;
-        while (arg[3+i] != '\0' && i < 11) {
-          temp[i] = arg[3+i];
+        while (tok[3+i] != '\0' && i < 11) {
+          temp[i] = tok[3+i];
           i++;
         }
         temp[i] = '\0';
+     
         
-        if (firstColor) {
-          colorStart[0] = atoi(strtok(temp, ","));
-          colorStart[1] = atoi(strtok(NULL, ","));
-          colorStart[2] = atoi(strtok(NULL, ","));
-        } else {
-          colorEnd[0] = atoi(strtok(temp, ","));
-          colorEnd[1] = atoi(strtok(NULL, ","));
-          colorEnd[2] = atoi(strtok(NULL, ","));
-        }
+        Serial.print("First RGB: ");Serial.println(temp);
+        i = 0;
+        tI = 0;
+        cI = 0;
+        char cTemp[4];
+        do {         
+          if (temp[i] == ',' || temp[i] == '\0') {
+            if (firstColor){
+              colorStart[cI] = atoi(cTemp);
+            } else {
+              colorEnd[cI] = atoi(cTemp);
+            }
+            tI = 0;
+            cI++;
+          } else {
+            cTemp[tI] = temp[i];
+            tI++;
+          }
+          i++;
+        } while (temp[i] != '\0' && i < 11);        
+        firstColor = false;
+        
         break;
       case 't':
-        timeRepeats = getDigits(1, arg);
+        timeRepeats = getDigits(1, tok);
         break;
       case 'f':
-        numFrames = getDigits(1, arg);
+        numFrames = getDigits(1, tok);
         break;
       case 's':
-        if (arg[1] == '\'') {
-          strtok(arg, "'"); //Trims "s'"
-          filename = String(strtok(NULL, "'")); //Gets filename up to next '
+        if (tok[1] == '\'') {
+          strtok(tok, "'"); //Trims "s'"
+          filename += String(strtok(NULL, "'")); //Gets filename up to next '
         } else {
-          fileNum = getDigits(1, arg);
+          fileNum = getDigits(1, tok);
         }
         break;
       case 'x':
-        x = getDigits(1, arg);
+        x = getDigits(1, tok);
         break;
       case 'y':
-        y = getDigits(1, arg);
+        y = getDigits(1, tok);
         break;
       default:
         return false;
     }
-    
   }
-  
-  
-  if (filename.length() < 3) {  //If filename is too short just play whats in memory
-    playingSprite = true;
-    indexSprite = 0;
-    animations.StartAnimation(0, 60, LoopAnimUpdate);
-    return true;  
+  Serial.print("Last token: ");Serial.println(tok);
+
+  if (fileNum > 0) {
+    filename += "sp" + String(fileNum);
   }
-  if (!filename.endsWith(".bmp")) {
-    Serial.println(F("must be a bmp file"));
-    return false;
-  }
-  
+  Serial.print("Filename: ");Serial.println(filename);
   File f = SPIFFS.open(filename, "r");
   if (!f) {
     Serial.println(F("file open failed"));
     return false;
   }
-  if (!readBitmapInfo(f)) { //If loading failed play what's in memory
-    Serial.println(F("Failed to get bitmap info"));
-    f.close();
-    playingSprite = true;
-    indexSprite = 0;
-    animations.StartAnimation(0, 60, LoopAnimUpdate);
-    return true;  
-  }
-  char* xstr = strtok(NULL, " "); //Look for x an y limits
-  char* ystr = strtok(NULL, " ");
-
-  if (xstr) {
-    x = String(xstr).toInt();
-    if (ystr) {
-      y = String(ystr).toInt();
-    }
-    else {
-      y = min(pixelsPerStrip/x, imageHeight);
-    }
-  } else {
-    y = min(pixelsPerStrip, imageHeight);   //default x and y limits
-    x = max(pixelsPerStrip / imageHeight, 1);
-  }
+//    if (!readBitmapInfo(f)) { //If loading failed play what's in memory
+//      Serial.println(F("Failed to get bitmap info"));
+//      f.close();
+//      playingSprite = true;
+//      indexSprite = 0;
+//      animations.StartAnimation(0, 60, LoopAnimUpdate);
+//      return true;
+//    }
   
-  if (!convertBitmap(f, x, y)) {
+  imageHeight = y;
+  imageWidth = x;
+  
+  if (!loadSpriteFile(f, x, y)) {
     Serial.println(F("Failed to convert bitmap into memory"));
   }
   f.close();
   playingSprite = true;
   indexSprite = 0;
   animations.StartAnimation(0, 60, LoopAnimUpdate);
-  return true;  
+  return true;
 }
 
 void spriteSetup() {  //Loads default sprite object
@@ -1572,3 +1602,5 @@ void spriteSetup() {  //Loads default sprite object
   }
   spriteSheet = new NeoVerticalSpriteSheet<NeoBufferMethod<NeoGrbFeature>>(imageWidth, imageHeight, 1, imageBuffer);  
 }
+
+
