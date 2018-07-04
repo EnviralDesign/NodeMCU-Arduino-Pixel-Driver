@@ -86,6 +86,7 @@ NeoVerticalSpriteSheet<NeoBufferMethod<NeoGrbFeature>> *spriteSheet;
 uint16_t spritePixels = 16;
 uint16_t spriteFrames = 20;
 uint32_t spriteCounter = 0;
+uint32_t spriteRepeat = 1;
 uint32_t fileAddressPixels = 0;
 uint32_t sizeRow = 0;
 uint8_t bytesPerPixel = 3;
@@ -721,8 +722,12 @@ void loop() { //main program loop
   if(streaming) {
     playStreaming();
   } else if (playingSprite){
-    animations.UpdateAnimations();
-    strip->Show();
+    if (spriteCounter > spriteRepeat) {
+      blank();
+    } else {
+      animations.UpdateAnimations();
+      strip->Show();
+    }
   } else {
     int packetSize = udp.parsePacket();
     if (packetSize > 0) udp.read();  //remove any udp packet from buffer while in effect mode
@@ -1581,8 +1586,11 @@ bool handleSprite() { //SPRITE rgb255,0,0 rgb0,0,255 t10 f30 s1 x4 y3
         break;
       case 's':
         if (tok[1] == '\'') {
-          strtok(tok, "'"); //Trims "s'"
-          filename += String(strtok(NULL, "'")); //Gets filename up to next '
+          i = 2;
+          while (tok[i] != '\'') {
+            filename += String(tok[i]);
+            i++;
+          }
         } else {
           fileNum = getDigits(1, tok);
         }
@@ -1628,6 +1636,7 @@ bool handleSprite() { //SPRITE rgb255,0,0 rgb0,0,255 t10 f30 s1 x4 y3
   indexSprite = 0;
   spriteCounter = 0;
   spriteFrames = numFrames;
+  spriteRepeat = timeRepeats;
   animations.StartAnimation(0, 60, LoopAnimUpdate);
   return true;
 }
@@ -1722,6 +1731,10 @@ void spriteSetup() {  //Loads default sprite object
   for (int i = 0; i < 3*16*20; i++) {
     imageBuffer[i] = tempBuffer[i];
   }
+  indexSprite = 0;
+  spriteCounter = 0;
+  spriteFrames = 20;
+  spriteRepeat = 100;
   spriteSheet = new NeoVerticalSpriteSheet<NeoBufferMethod<NeoGrbFeature>>(16, 20, 1, imageBuffer);  
 }
 
