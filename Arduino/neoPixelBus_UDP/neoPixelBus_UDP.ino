@@ -1357,36 +1357,56 @@ void LoopAnimUpdate(const AnimationParam& param) {
 //  return true;
 //}
 
-bool loadSpriteFile(File f, uint16_t xIn, uint16_t yIn, uint16_t frames, byte cStart[], byte cEnd[]) {
+// Frames = 10, cStart = [0,0,0] cEnd = [255,255,255] cAdjust = [0 + 255-0/10 * f]
+// BiLinear Blend: 
+//  Upper Left: cStart 
+//  Lower Right: cEnd
+//  Upper Right & Lower Left: value in file
+bool loadSpriteFile(File f, uint16_t xIn, uint16_t yIn, uint16_t frames, uint8_t cStartIn[], uint8_t cEndIn[]) {
   free(imageBuffer);
   String imgParams = "X: " + String(xIn) + ", Y: " + String(yIn) + ", Frames: " + String(frames);
+  imgParams += ", Start: (" + String(cStartIn[0]) + ", " + String(cStartIn[1]) + ", " + String(cStartIn[2]) + ")";
+  imgParams += ", End: (" + String(cEndIn[0]) + ", " + String(cEndIn[1]) + ", " + String(cEndIn[2]) + ")";
   Serial.println(imgParams);
   imageBuffer = (uint8_t *)malloc(bytesPerPixel * xIn * yIn * frames);
   int bufferCount = 0;
   double frameDiff[bytesPerPixel];
+  float progress = 0;
+  RgbColor cStart = RgbColor(cStartIn[0], cStartIn[1], cStartIn[2]);
+  RgbColor cEnd = RgbColor(cEndIn[0], cEndIn[1], cEndIn[2]);
   for (byte fI = 0; fI < bytesPerPixel; fI++) {
-    frameDiff[fI] = double(cEnd[fI] - cStart[fI]) / double(frames);
+    frameDiff[fI] = double(cEndIn[fI] - cStartIn[fI]) / double(frames);
   }
   for (uint16_t frameCounter = 0; frameCounter < frames; frameCounter++) {
     byte cAdjust[bytesPerPixel];
     for (byte cI = 0; cI < bytesPerPixel; cI++) {
       //                    15  *   255/30
-      cAdjust[cI] = round(double(frameCounter + 1) * frameDiff[cI]);
+      progress = double(frameCounter + 1) / double(frames);
+      //cAdjust[cI] = cStart[cI] + round(double(frameCounter + 1) * frameDiff[cI]);
     }
     for (uint16_t y = 0; y < yIn; y++) {
       //if (f.seek((y+1) * xIn * bytesPerPixel * (frameCounter + 1), SeekCur)) {
         for (uint16_t x = 0; x < xIn; x++) {          
-          uint8_t bgr[4];
+          uint8_t bgr[bytesPerPixel];
           f.read(bgr, bytesPerPixel);
+          RgbColor spriteColor = RgbColor(bgr[0], bgr[1], bgr[2]);
+          RgbColor result = RgbColor::BilinearBlend(
+            cStart,                 //Upper Left
+            spriteColor,            //Upper Right
+            spriteColor,            //Lower Left
+            cEnd,                   //Lower Right
+            progress,               //X axis
+            0.5f                    //Y axis
+          );
           //if (f.read(bgr, bytesPerPixel) != bytesPerPixel) {
-          //  imageBuffer[bufferCount++] = 0;
-          //  imageBuffer[bufferCount++] = 0;
-          //  imageBuffer[bufferCount++] = 0;
+          imageBuffer[bufferCount++] = result.R;
+          imageBuffer[bufferCount++] = result.G;
+          imageBuffer[bufferCount++] = result.B;
           //  if (bytesPerPixel == 4) imageBuffer[bufferCount++] = 0;  //Write zeros
           //} else {
-            for (byte i = 0; i < bytesPerPixel; i++) {                
-              imageBuffer[bufferCount++] = min(bgr[i] + cAdjust[i], 255);
-            }              
+//          for (byte i = 0; i < bytesPerPixel; i++) {                           
+//            imageBuffer[bufferCount++] = max(min((bgr[i] + cAdjust[i])/2, 255), 0);
+//          }              
           //}          
         }
       //}
@@ -1526,8 +1546,9 @@ bool handleSprite() { //SPRITE rgb255,0,0 rgb0,0,255 t10 f30 s1 x4 y3
   bytesPerPixel = 3; //Set bytes per pixel to 3 as default
   //Incoming Parameters
   String filename = "/";
-  byte colorStart[3]  = {0, 0, 0};
-  byte colorEnd[3] = {0, 0, 0};
+  uint8_t colorStart[3]  = {0, 0, 0};
+  uint8_t colorEnd[3] = {0, 0, 0};
+  char cTemp[4] = {'\0'};
   bool firstColor = true;
   uint32_t timeRepeats = 0;
   uint32_t numFrames = 0;
@@ -1552,20 +1573,22 @@ bool handleSprite() { //SPRITE rgb255,0,0 rgb0,0,255 t10 f30 s1 x4 y3
           temp[i] = tok[3+i];
           i++;
         }
-        temp[i] = '\0';
-     
-        
-        Serial.print("First RGB: ");Serial.println(temp);
+        temp[i] = '\0';        
         i = 0;
         tI = 0;
         cI = 0;
-        char cTemp[4];
         do {         
           if (temp[i] == ',' || temp[i] == '\0') {
+            cTemp[tI] = '\0';
             if (firstColor){
               colorStart[cI] = atoi(cTemp);
+              Serial.print("First RGB: ");Serial.println(String(colorStart[0]) + ":" + String(colorStart[1]) + ":" + String(colorStart[2]));
             } else {
               colorEnd[cI] = atoi(cTemp);
+              Serial.print("Second RGB: ");Serial.println(String(colorEnd[0]) + ":" + String(colorEnd[1]) + ":" + String(colorEnd[2]));
+            }
+            if (temp[i] == '\0') {
+              break;
             }
             tI = 0;
             cI++;
@@ -1574,7 +1597,7 @@ bool handleSprite() { //SPRITE rgb255,0,0 rgb0,0,255 t10 f30 s1 x4 y3
             tI++;
           }
           i++;
-        } while (temp[i] != '\0' && i < 11);        
+        } while (i < 11);        
         firstColor = false;
         
         break;
@@ -1624,7 +1647,6 @@ bool handleSprite() { //SPRITE rgb255,0,0 rgb0,0,255 t10 f30 s1 x4 y3
 //      animations.StartAnimation(0, 60, LoopAnimUpdate);
 //      return true;
 //    }
-  
   if (!loadSpriteFile(f, x, y, numFrames, colorStart, colorEnd)) {
     Serial.println(F("Failed to convert bitmap into memory"));
     return false;
