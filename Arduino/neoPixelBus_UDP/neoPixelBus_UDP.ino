@@ -87,6 +87,7 @@ uint16_t spritePixels = 16;
 uint16_t spriteFrames = 20;
 uint32_t spriteCounter = 0;
 uint32_t spriteRepeat = 1;
+uint32_t spriteAnimationTime = 60;
 uint32_t fileAddressPixels = 0;
 uint32_t sizeRow = 0;
 uint8_t bytesPerPixel = 3;
@@ -1385,31 +1386,22 @@ bool loadSpriteFile(File f, uint16_t xIn, uint16_t yIn, uint16_t frames, uint8_t
       //cAdjust[cI] = cStart[cI] + round(double(frameCounter + 1) * frameDiff[cI]);
     }
     for (uint16_t y = 0; y < yIn; y++) {
-      //if (f.seek((y+1) * xIn * bytesPerPixel * (frameCounter + 1), SeekCur)) {
-        for (uint16_t x = 0; x < xIn; x++) {          
-          uint8_t bgr[bytesPerPixel];
-          f.read(bgr, bytesPerPixel);
-          RgbColor spriteColor = RgbColor(bgr[0], bgr[1], bgr[2]);
-          RgbColor result = RgbColor::BilinearBlend(
-            cStart,                 //Upper Left
-            spriteColor,            //Upper Right
-            spriteColor,            //Lower Left
-            cEnd,                   //Lower Right
-            progress,               //X axis
-            0.5f                    //Y axis
-          );
-          //if (f.read(bgr, bytesPerPixel) != bytesPerPixel) {
-          imageBuffer[bufferCount++] = result.R;
-          imageBuffer[bufferCount++] = result.G;
-          imageBuffer[bufferCount++] = result.B;
-          //  if (bytesPerPixel == 4) imageBuffer[bufferCount++] = 0;  //Write zeros
-          //} else {
-//          for (byte i = 0; i < bytesPerPixel; i++) {                           
-//            imageBuffer[bufferCount++] = max(min((bgr[i] + cAdjust[i])/2, 255), 0);
-//          }              
-          //}          
-        }
-      //}
+      for (uint16_t x = 0; x < xIn; x++) {          
+        uint8_t bgr[bytesPerPixel];
+        f.read(bgr, bytesPerPixel);
+        RgbColor spriteColor = RgbColor(bgr[0], bgr[1], bgr[2]);
+        RgbColor result = RgbColor::BilinearBlend(
+          cStart,                 //Upper Left
+          spriteColor,            //Upper Right
+          spriteColor,            //Lower Left
+          cEnd,                   //Lower Right
+          progress,               //X axis
+          0.5f                    //Y axis
+        );
+        imageBuffer[bufferCount++] = result.R;
+        imageBuffer[bufferCount++] = result.G;
+        imageBuffer[bufferCount++] = result.B;       
+      }
     }
   }
   delete spriteSheet;
@@ -1437,7 +1429,8 @@ bool spriteParse() {
   int tCount = 0;
   int fCount = 0;
   int xCount = 0;
-  int yCount = 0;  
+  int yCount = 0;
+  int aCount = 0;
   int i = 0;
   int commaCount = 0;
   play.toCharArray(buf, 256);
@@ -1506,12 +1499,16 @@ bool spriteParse() {
         if (!checkDigits(1, tok)) return false;
         yCount++;
         break;
+      case 'a':
+        if (!checkDigits(1, tok)) return false;
+        aCount++;
+        break;
       default:
         return false;
     }
   }
 
-  if (rgbCount == 2 && sCount == 1 && tCount == 1 && fCount == 1 && xCount == 1 && yCount == 1) return true;
+  if (rgbCount == 2 && sCount == 1 && tCount == 1 && fCount == 1 && xCount == 1 && yCount == 1 && aCount == 1) return true;
   else return false;
 }
 
@@ -1534,8 +1531,8 @@ int getDigits(int index, char* arr) {
   return atoi(temp);
 }
 
-bool handleSprite() { //SPRITE rgb255,0,0 rgb0,0,255 t10 f30 s1 x4 y3 
-                      //SPRITE rgb255,0,0 rgb0,0,255 t10 f30 s'filename.bmp' x8 y32
+bool handleSprite() { //SPRITE rgb255,0,0 rgb0,0,255 t10 f30 s1 x4 y3 a60
+                      //SPRITE rgb255,0,0 rgb0,0,255 t10 f30 s'filename.bmp' x8 y32 a60
   if (!spriteParse()) {
     Serial.println("Sprite failed to parse");
     return false;
@@ -1607,6 +1604,9 @@ bool handleSprite() { //SPRITE rgb255,0,0 rgb0,0,255 t10 f30 s1 x4 y3
       case 'f':
         numFrames = getDigits(1, tok);
         break;
+      case 'a':
+        spriteAnimationTime = getDigits(1, tok);
+        break;
       case 's':
         if (tok[1] == '\'') {
           i = 2;
@@ -1659,7 +1659,7 @@ bool handleSprite() { //SPRITE rgb255,0,0 rgb0,0,255 t10 f30 s1 x4 y3
   spriteCounter = 0;
   spriteFrames = numFrames;
   spriteRepeat = timeRepeats;
-  animations.StartAnimation(0, 60, LoopAnimUpdate);
+  animations.StartAnimation(0, spriteAnimationTime, LoopAnimUpdate);
   return true;
 }
 
