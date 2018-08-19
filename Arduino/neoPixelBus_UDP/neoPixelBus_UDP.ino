@@ -1,15 +1,22 @@
 // include some libraries
+#include <ArduinoJson.h>
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
 #include <WiFiUdp.h>
 #include <NeoPixelBrightnessBus.h>
+#include <NeoPixelAnimator.h>
 #include <WiFiManager.h>
 #include <DoubleResetDetector.h>
+#include "FS.h"ftp
+#include <ESP8266FtpServer.h>
 
 #include <EnviralDesign.h>
 
 #define DRD_TIMEOUT 10
 #define DRD_ADDRESS 0
+
+#define min(a,b) ((a)<(b)?(a):(b))
+#define max(a,b) ((a)>(b)?(a):(b))
 
 DoubleResetDetector drd(DRD_TIMEOUT, DRD_ADDRESS); 
 
@@ -20,11 +27,11 @@ DoubleResetDetector drd(DRD_TIMEOUT, DRD_ADDRESS);
 String deviceName = "PxlNode-8266";
 
 // number of physical pixels in the strip.
-uint16_t pixelsPerStrip = 100;
+uint16_t pixelsPerStrip = 256;
 
 // This needs to be evenly divisible by PIXLES_PER_STRIP.
 // This represents how large our packets are that we send from our software source IN TERMS OF LEDS.
-uint16_t chunkSize = 25;
+uint16_t chunkSize = 64;
 
 // Dynamically limit brightness in terms of amperage.
 float amps = 3;
@@ -43,6 +50,9 @@ byte InitColor[] = {200, 75, 10};
 
 //Interfaces user defined variables with memory stored in EEPROM
 EnviralDesign ed(&pixelsPerStrip, &chunkSize, &mAPerPixel, &deviceName, &amps, &udpPort, InitColor);
+
+//FTP server to store bitmaps
+FtpServer ftpSrv;
 
 #define UDP_PORT_OUT 2391
 #define STREAMING_TIMEOUT 10  //  blank streaming frame after X seconds
@@ -68,6 +78,23 @@ EnviralDesign ed(&pixelsPerStrip, &chunkSize, &mAPerPixel, &deviceName, &amps, &
 const uint8_t PixelPin = 2;
 NeoPixelBrightnessBus<NeoGrbFeature, NeoEsp8266Dma800KbpsMethod> *strip;
 NeoGamma<NeoGammaTableMethod> colorGamma;
+NeoPixelAnimator animations(1); //Number of animations
+
+NeoVerticalSpriteSheet<NeoBufferMethod<NeoGrbFeature>> *spriteSheet;
+
+//Variables used by Sprite Object
+uint16_t spritePixels = 16;
+uint16_t spriteFrames = 20;
+uint32_t spriteCounter = 0;
+uint32_t spriteRepeat = 1;
+uint32_t spriteAnimationTime = 60;
+uint32_t fileAddressPixels = 0;
+uint32_t sizeRow = 0;
+uint8_t bytesPerPixel = 3;
+bool bottomToTop;
+uint8_t *imageBuffer;
+uint16_t indexSprite;
+bool playingSprite = false;
 
 // holds chunksize x 3(chans per led) + 1 "action" byte
 uint16_t udpPacketSize;
@@ -144,10 +171,7 @@ int frames=1;
 int offset=0;
 volatile int frame=0;
 
-String rt;
-
 WiFiManager wifiManager;
-
 
 void setup() {
   if (drd.detectDoubleReset()) { //if user double clicks reset button, then reset wifisetting
@@ -161,14 +185,17 @@ void setup() {
   Serial.println();
   Serial.println(F("Serial started")); 
 
-  ed.setCompile(String(__TIME__));
+  ed.setCompile(String(__TIME__));    //Compiling erases variables previously changed over the network
   ed.start();
-
+ 
   setUdpPacketSize();
   
   //Initializes NeoPixelBus
   startNeoPixelBus();
-    
+
+  //Initialize SpriteObject
+  spriteSetup();
+  
   // We start by connecting to a WiFi network
   //Serial.print("Connecting to ");
   //Serial.println(ssid);
@@ -191,6 +218,16 @@ void setup() {
   Serial.println("IP address: ");
   Serial.println(WiFi.localIP());
 
+  //SPIFFS Setup  FTP Server
+  if (!SPIFFS.begin()) {
+    Serial.println(F("Failed to mount file system"));
+    while(1) {
+      delay(1000);
+    }
+  }
+  ftpSrv.begin("esp8266", "esp8266");  //Username and password
+  Serial.println(F("Started FTP Server"));
+  
   startUDP();
   Serial.print("Local port: ");
   Serial.println(udp.localPort());
@@ -220,7 +257,7 @@ void setup() {
   server.on("/survey", HTTP_GET, []() {
     // build Javascript code to draw SVG wifi graph
     IPAddress local_ip=WiFi.localIP();
-    rt="<!doctype html><html><body>";
+    String rt="<!doctype html><html><body>";
 //    rt+="Connected to:"+String(ssid)+"<br>IP address:"+String(local_ip[0]) + "." + String(local_ip[1]) + "." + String(local_ip[2]) + "." + String(local_ip[3]);
     rt+="Connected to:"+WiFi.SSID()+"<br>IP address:"+String(local_ip[0]) + "." + String(local_ip[1]) + "." + String(local_ip[2]) + "." + String(local_ip[3]);
     rt+="<br>port:"+String(udpPort)+"<br>Expected packet size:"+String(udpPacketSize);
@@ -246,7 +283,7 @@ void setup() {
   server.on("/getstatus", HTTP_GET, []() {
     // build Javascript code to draw SVG wifi graph
     IPAddress local_ip=WiFi.localIP();
-    rt="<!doctype html><html><body>";
+    String rt="<!doctype html><html><body>";
     //rt+="Connected to:"+String(ssid)+"<br>IP address:"+String(local_ip[0]) + "." + String(local_ip[1]) + "." + String(local_ip[2]) + "." + String(local_ip[3]);
     rt+="Connected to:"+WiFi.SSID()+"<br>IP address:"+String(local_ip[0]) + "." + String(local_ip[1]) + "." + String(local_ip[2]) + "." + String(local_ip[3]);
     rt+="<br>port:"+String(udpPort)+"<br>Expected packet size:"+String(udpPacketSize);
@@ -258,7 +295,9 @@ void setup() {
   server.on("/mcu_info", HTTP_GET, []() {
     // build javascript-like data
     IPAddress local_ip=WiFi.localIP();
-    rt = "name:"+deviceName;
+    FSInfo fs_info;
+
+    String rt = "name:"+deviceName;
     rt += ",";
     rt += "ip:"+String(local_ip[0]) + "." + String(local_ip[1]) + "." + String(local_ip[2]) + "." + String(local_ip[3]);
     rt += ",";
@@ -267,23 +306,44 @@ void setup() {
     rt += "port:"+String(udpPort);
     rt += ",";
     rt += "packetsize:"+String(udpPacketSize);
-    /** New Vars
-    rt += ",";
-    rt += "chunksize:"+String(chunkSize);
-    rt += ",";
-    rt += "pixels:"+String(pixelsPerStrip);
-    rt += ",";
-    rt += "mAperpixel:"+String(mAPerPixel);
-    rt += ",";
-    rt += "amps:"+String(amps);
-    rt += ",";
-    rt += "warmupcolor: ["+String(InitColor[0])+", "+String(InitColor[1])+", "+String(InitColor[2]) + ];
-    **/
     server.send(200, "text/html", rt);
   });
 
+  server.on("/mcu_json", HTTP_GET, []() {
+    // build json data
+    IPAddress local_ip=WiFi.localIP();
+    String rt;
+    FSInfo fs_info;
+    StaticJsonBuffer<1000> jsonBuffer;
+    JsonObject& root = jsonBuffer.createObject();
+    root["device_name"] = deviceName;
+    root["ip"] = String(local_ip[0]) + "." + String(local_ip[1]) + "." + String(local_ip[2]) + "." + String(local_ip[3]);
+    root["ssid"] = String(WiFi.SSID());
+    root["udp_streaming_port"] = udpPort;
+    root["packetsize"] = udpPacketSize;
+    root["chunk_size"] = chunkSize;
+    root["pixels_per_strip"] = pixelsPerStrip;
+    root["ma_per_pixel"] = mAPerPixel;
+    root["amps_limit"] = amps;
+    JsonArray& wcArr = root.createNestedArray("warmup_color");
+    wcArr.add(InitColor[0]);
+    wcArr.add(InitColor[1]);
+    wcArr.add(InitColor[2]);
+    if (SPIFFS.info(fs_info)) {
+      
+      root["totalBytes"] = fs_info.totalBytes;
+      root["usedBytes"] = fs_info.usedBytes;
+      root["blockSize"] = fs_info.blockSize;
+      root["pageSize"] = fs_info.pageSize;
+      root["maxOpenFiles"] = fs_info.maxOpenFiles;
+      root["maxPathLength"] = fs_info.maxPathLength;
+    }
+    root.printTo(rt);
+    server.send(200, "application/json", rt);
+  });
+
   server.on("/getframes", HTTP_GET, []() {
-    rt="<html><body><table>";
+    String rt="<html><body><table>";
     rt+="<tr style=\"border:1px solid black\"><th>Frame<br>#</th><th>Action<br>byte</td><th>Arrived At<br>[µS]</th><th>Packet Size<br>[bytes]</th><th>Power<br>[mA]</th><th>Power<br>Adjustment</th><th>Packet CPU<br>time [µS]</th><th>Frame CPU<br>time [µS]</th></tr>";
     long acum=0;
     long lastFrame=0;
@@ -327,51 +387,142 @@ void setup() {
     // Blinks red / black for 10 times showing each color during 10 frames.
     play=server.arg("plain");  //retrieve body from HTTP POST request
     streaming=false; //quit streaming mode and enter effects playing mode into main loop
+    playingSprite = false;  //Stop playing the sprite animation
     frame=0; //means it needs to fetch command from play sequence
     offset=0; // start parsing new line from leftmost character
-    //Serial.println("POST request");    
+    //Serial.println("POST request");
     server.send(200,"text/plain", "OK");
     });
 
   server.on("/mcu_config", HTTP_POST, []() {
+    if (server.hasArg("plain") == false) {
+      server.send(422, "application/json", "{\"error\":\"HTTP BODY MISSING\"}");
+      return;
+    }
     String updateString = server.arg("plain");  //retrieve body from HTTP POST request
-    if (updateString.indexOf("pixels_per_strip") == 0) {
-      Serial.println("Updating");
+    Serial.println(updateString);
+    drd.stop(); //Prevents WiFi wiping during resets
+    StaticJsonBuffer<2000> jsonBuffer;
+    JsonObject& input = jsonBuffer.parseObject(server.arg("plain"));
+    if (!input.success()) {     //Not a well formed json. Checking for regular command
+      if (updateString.length() > 64) {
+        server.send(422, "application/json", "{\"error\":\"COMMAND TOO LONG\"}");
+        return;
+      }
+      char str[64];
+      updateString.toCharArray(str, 64);
+      String cmd = strtok(str, " ");
+      if (cmd.indexOf("pixels_per_strip") == 0) {
+        Serial.println("Updating");
+        blank();
+        int val = String(strtok(NULL, " ")).toInt();
+        
+        if (!updatePixels(val)) {
+          server.send(422, "application/json", "{\"error\":\"PARAMETER OUT OF RANGE\",\"pixels_per_strip\":\"Failed\"}");
+          return;
+        }
+        server.send(200,"application/json", "{\"pixels_per_strip\":\"Success\"}");
+        startNeoPixelBus();
+        initDisplay();
+        //restart();  //restart no longer needed for pixel update
+        
+      } else if (cmd.indexOf("chunk_size") == 0) {
+        int val = String(strtok(NULL, " ")).toInt();
+        if (!updateChunk(val)) return;
+        setUdpPacketSize();
+        server.send(200,"application/json", "{\"chunk_size\":\"Success\"}");
+        
+      } else if (cmd.indexOf("ma_per_pixel") == 0) {
+        int val = String(strtok(NULL, " ")).toInt();
+        if (!updateMA(val)) return;
+        initDisplay();
+        server.send(200,"application/json", "{\"ma_per_pixel\":\"Success\"}");
+        
+      } else if (cmd.indexOf("device_name") == 0) {
+        if (!updateName(String(strtok(NULL, " ")))) return;
+        server.send(200,"application/json", "{\"device_name\":\"Success\"}");
+        
+      } else if (cmd.indexOf("amps_limit") == 0) {
+        float val = String(strtok(NULL, " ")).toFloat();
+        if (!updateAmps(val)) return;
+        milliAmpsLimit = amps * 1000;
+        initDisplay();
+        server.send(200,"application/json", "{\"amps_limit\":\"Success\"}");
+        
+      } else if (cmd.indexOf("udp_streaming_port") == 0) {
+        int val = String(strtok(NULL, " ")).toInt();
+        if (!updateUDP(val)) return;
+        startUDP();
+        server.send(200,"application/json", "{\"udp_streaming_port\":\"Success\"}");
+        //blankRestart();
+        
+      } else if (cmd.indexOf("warmup_color") == 0) {
+        byte v1 = String(strtok(NULL, " ")).toInt();
+        byte v2 = String(strtok(NULL, " ")).toInt();
+        byte v3 = String(strtok(NULL, " ")).toInt();
+        updateWarmUp(v1, v2, v3);
+        initDisplay();
+        server.send(200,"application/json", "{\"warmup_color\":\"Success\"}");
+        
+      } else {
+        Serial.println(cmd);
+        server.send(422,"application/json", "{\"error\":\"INVALID COMMAND\"}");
+      } 
+      
+    } else {  //JSON detected
+      JsonObject& root = jsonBuffer.createObject();
+      String rt;
       blank();
-      updateParameters(8, 1, strlen("pixels_per_strip"), "pixels_per_strip", updateString);
-      server.send(200,"text/plain", "OK");
-      startNeoPixelBus();
-      initDisplay();
-      //restart();
-    } else if (updateString.indexOf("chunk_size") == 0) {
-      updateParameters(8, 1, strlen("chunk_size"), "chunk_size", updateString);
-      setUdpPacketSize();
-      server.send(200,"text/plain", "OK");
-    } else if (updateString.indexOf("ma_per_pixel") == 0) {
-      updateParameters(8, 1, strlen("ma_per_pixel"), "ma_per_pixel", updateString);
-      initDisplay();
-      server.send(200,"text/plain", "OK");
-    } else if (updateString.indexOf("device_name") == 0) {
-      updateParameters(8, 1, strlen("device_name"), "device_name", updateString);
-      server.send(200,"text/plain", "OK");
-    } else if (updateString.indexOf("amps_limit") == 0) {
-      updateParameters(16, 1, strlen("amps_limit"), "amps_limit", updateString);
-      milliAmpsLimit = amps * 1000;
-      initDisplay();
-      server.send(200,"text/plain", "OK");
-    } else if (updateString.indexOf("udp_streaming_port") == 0) {
-      updateParameters(8, 1, strlen("udp_streaming_port"), "udp_streaming_port", updateString);
-      startUDP();
-      server.send(200,"text/plain", "OK");
-      //blankRestart();
-    } else if (updateString.indexOf("warmup_color") == 0) {
-      updateParameters(16, 3, strlen("warmup_color"), "warmup_color", updateString);
-      initDisplay();
-      server.send(200,"text/plain", "OK");
-    } else {
-      Serial.println(updateString);
-      server.send(422,"text/plain", "INVALID COMMAND");
-    }    
+      bool initD = false;
+
+      if (input["pixels_per_strip"] != NULL) {
+        root["pixels_per_strip"] = (updatePixels(input["pixels_per_strip"]) ? "Success" : "Failed");
+        startNeoPixelBus();
+        initD = true;
+      }
+      
+      if (input["chunk_size"] != NULL) {
+        root["chunk_size"] = (updateChunk(input["chunk_size"]) ? "Success" : "Failed");
+        setUdpPacketSize();
+      }
+      
+      if (input["ma_per_pixel"] != NULL) {
+        root["ma_per_pixel"] = (updateMA(input["ma_per_pixel"]) ? "Success" : "Failed");
+        initD = true;
+      }
+      
+      if (input["device_name"].success()) {
+        const char* dName = input["device_name"];
+        Serial.println(dName);        
+        root["device_name"] = (updateName(String(dName)) ? "Success" : "Failed");
+      }
+      
+      if (input["amps_limit"] != NULL) {
+        root["amps_limit"] = (updateAmps(input["amps_limit"]) ? "Success" : "Failed");
+        milliAmpsLimit = amps * 1000;
+        initD = true;
+      }
+      
+      if (input["udp_streaming_port"] != NULL) {
+        root["udp_streaming_port"] = (updateUDP(input["udp_streaming_port"]) ? "Success" : "Failed");
+        startUDP();
+      }
+      
+      if (input["warmup_color"] != NULL ) {
+        //byte arr[3] = input["warmup_color"];
+        //char arr[16];
+        //temp.toCharArray(arr, 16);
+        byte v1 = input["warmup_color"][0];
+        byte v2 = input["warmup_color"][1];
+        byte v3 = input["warmup_color"][2];
+        root["warmup_color"] = (updateWarmUp(v1, v2, v3) ? "Success" : "Failed");
+        initD = true;
+      }
+      root.printTo(rt);
+      server.send(200, "application/json", rt);
+      if (initD) initDisplay();
+    }
+    
    });
   
   // Start the server //MDB
@@ -572,6 +723,13 @@ int getTimes(String params) {
 void loop() { //main program loop
   if(streaming) {
     playStreaming();
+  } else if (playingSprite){
+    if (spriteCounter < spriteRepeat) {
+      animations.UpdateAnimations();
+      strip->Show();
+    } else {
+      blank();
+    }
   } else {
     int packetSize = udp.parsePacket();
     if (packetSize > 0) udp.read();  //remove any udp packet from buffer while in effect mode
@@ -580,10 +738,12 @@ void loop() { //main program loop
     };
     delay(16);
   };
+  ftpSrv.handleFTP();
   server.handleClient();
 }
 
 boolean playEffect() {
+  Serial.println(play);
   if(frame==0) {  // frame zero means to go get a command line from the HTTP request body
     String line,params;
     int pos,RGBcolors,HSBcolors,HSLcolors;
@@ -596,7 +756,8 @@ boolean playEffect() {
       };
       if(byte(play[offset])==10) offset++; // skip line feed
 
-      command=getCommand(line);  //Parse all parameters 
+      command=getCommand(line);  //Parse all parameters
+      if (command.equals("SPRITE")) return handleSprite();
       params=getParams(line);
       // Get RBG colors
       RGBcolors=getColors(params,"RGB");
@@ -967,38 +1128,50 @@ void huehsl(HslColor hsl1, HslColor hsl2, int frames, int times) {
   return;
 }
 
-void updateParameters(byte slen, byte pnum, byte commlen, String command, String updateString) {
-  drd.stop();  //Prevents updates from resetting WiFi
-
-  if (command.equals("pixels_per_strip")) {
-    int val = updateString.substring(commlen).toInt();
-    if (val > 1500) server.send(422, "text/plain", "PARAMETERS OUT OF RANGE");
-    else ed.updatePixelsPerStrip(val);
-  } else if (command.equals("chunk_size")) {
-    ed.updateChunkSize(updateString.substring(commlen).toInt());
-  } else if (command.equals("ma_per_pixel")) {
-    ed.updatemaPerPixel(updateString.substring(commlen).toInt());
-  } else if (command.equals("device_name")) {
-    ed.updateDeviceName(updateString.substring(commlen));
-  } else if (command.equals("amps_limit")) {
-    ed.updateAmps(updateString.substring(commlen).toFloat());
-  } else if (command.equals("udp_streaming_port")) {
-    ed.updateUDPport(updateString.substring(commlen).toInt());
-  } else if (command.equals("warmup_color")) {
-    char str[slen];
-    byte parameters[3];
-    updateString.substring(commlen+1).toCharArray(str, slen);
-    parameters[0] = atoi(strtok(str, " "));
-    parameters[1] = atoi(strtok(NULL, " "));
-    parameters[2] = atoi(strtok(NULL, " "));
-    Serial.print(parameters[0]);Serial.print(parameters[1]);Serial.println(parameters[2]);
-    ed.updateInitColor(parameters);
+bool updatePixels(int val) {
+  if (val > 1500) {
+    return false;
+  } else {
+    ed.updatePixelsPerStrip(val);
+    return true;
   }
+}
+
+bool updateChunk(int val) {
+  ed.updateChunkSize(val);
+  return true;
+}
+
+bool updateMA(int val) {
+  ed.updatemaPerPixel(val);
+  return true;
+}
+
+bool updateName(String val) {
+  ed.updateDeviceName(val);
+  return true;
+}
+
+bool updateAmps(float val) {
+  ed.updateAmps(val);
+  return true;
+}
+
+bool updateUDP(int val) {
+  ed.updateUDPport(val);
+  return true;
+}
+
+bool updateWarmUp(byte v1, byte v2, byte v3) {
+  byte parameters[3] = {v1, v2, v3};
+  ed.updateInitColor(parameters);
+  return true;
 }
 
 void blank() {
   play="blank";
   streaming=false;
+  playingSprite=false;
   frame=0;
   offset=0;
   playEffect();
@@ -1049,4 +1222,566 @@ void initDisplay() {
     delay(16);
   };
 }
+
+void LoopAnimUpdate(const AnimationParam& param) {
+  // wait for this animation to complete,
+  // we are using it as a timer of sorts
+  if (param.state == AnimationState_Completed)
+  {
+      // done, time to restart this position tracking animation/timer
+      animations.RestartAnimation(param.index);
+
+      // draw the next frame in the sprite
+      spriteSheet->Blt(*strip, 0, indexSprite);
+      indexSprite = (indexSprite + 1) % spriteFrames; // increment and wrap
+      if (indexSprite == 0) {
+        spriteCounter++;
+      }
+  }  
+}
+
+//bool readBitmapInfo(File _file) {  //Extracts metadata from BitMap File
+//  BitmapFileHeader bmpHeader;
+//  BitmapInfoHeader bmpInfoHeader;
+//  size_t result;
+//
+//  result = _file.read((uint8_t*)(&bmpHeader), sizeof(bmpHeader));
+//
+//  if (result != sizeof(bmpHeader) ||
+//      bmpHeader.FileId != c_BitmapFileId ||
+//      bmpHeader.FileSize != _file.size()) {
+//        goto error;
+//  }
+//
+//  result = _file.read((uint8_t*)(&bmpInfoHeader), sizeof(bmpInfoHeader));
+//
+//  if (result != sizeof(bmpInfoHeader) ||
+//      result != bmpInfoHeader.Size ||
+//      1 != bmpInfoHeader.Planes ||
+//      BI_Rgb != bmpInfoHeader.Compression) {
+//        goto error;
+//  }
+//
+//  if(!(24 == bmpInfoHeader.BitsPerPixel ||    //RGB
+//       32 == bmpInfoHeader.BitsPerPixel)) {  //RGBW
+//        goto error;
+//  }
+//
+//  imageWidth = abs(bmpInfoHeader.Width);
+//  imageHeight = abs(bmpInfoHeader.Height);
+//  fileAddressPixels = bmpHeader.PixelAddress;
+//  bottomToTop = (bmpInfoHeader.Height > 0);
+//  sizeRow = (bmpInfoHeader.BitsPerPixel * imageWidth + 31) / 32 * 4;
+//  bytesPerPixel = bmpInfoHeader.BitsPerPixel / 8;
+//  
+//  return true;
+//  error:
+//    fileAddressPixels = 0;
+//    imageWidth = 0;
+//    imageHeight = 0;
+//    sizeRow = 0;
+//    bytesPerPixel = 0;
+//    return false;
+//}
+
+//bool convertBitmap(File f, uint16_t xIn, uint16_t yIn) { //Transfers bytes from bitmap to memory
+//  free(imageBuffer);
+//  uint16_t xFile = xIn, yFile = yIn;
+//  
+//  imageBuffer = (uint8_t *)malloc(bytesPerPixel * xIn * yIn);
+//  int bufferCount = 0;
+//  for (uint16_t y = 0; y < imageHeight; y++) {
+//    if (xIn >= imageWidth) xFile = imageWidth - 1;
+//    if (yIn + y >= imageHeight) yFile = imageHeight -1 + y;
+//    if (seek(f, xFile, yFile)) {
+//      for (int16_t x = 0; x < xIn; x++) {
+//        if (xFile < imageWidth) {
+//          uint8_t bgr[4];
+//          if (f.read(bgr, bytesPerPixel) != bytesPerPixel) {
+//            imageBuffer[bufferCount++] = 0;
+//            imageBuffer[bufferCount++] = 0;
+//            imageBuffer[bufferCount++] = 0;
+//            if (bytesPerPixel == 4) imageBuffer[bufferCount++] = 0;  //Write zeros
+//          } else {
+//            imageBuffer[bufferCount++] = bgr[0];
+//            imageBuffer[bufferCount++] = bgr[1];
+//            imageBuffer[bufferCount++] = bgr[2];
+//            if (bytesPerPixel == 4) imageBuffer[bufferCount++] = bgr[3];
+//            xFile++;
+//          }          
+//        }
+//      }
+//    }
+//  }  
+//}
+
+//bool loadSpriteFileBak(File f, uint16_t xIn, uint16_t yIn, uint16_t frames, byte cStart[], byte cEnd[]) {
+//  free(imageBuffer);
+//  imageBuffer = (uint8_t *)malloc(bytesPerPixel * xIn * yIn * frames);
+//  int bufferCount = 0;
+//  double frameDiff[bytesPerPixel];
+//  for (byte fI = 0; fI < bytesPerPixel; fI++) {
+//    frameDiff[fI] = double(cEnd[fI] - cStart[fI]) / double(frames);
+//  }
+//  for (uint16_t frameCounter = 0; frameCounter < frames; frameCounter++) {
+//    uint16_t xFile = xIn, yFile = yIn;
+//    byte cAdjust[bytesPerPixel];
+//    for (byte cI = 0; cI < bytesPerPixel; cI++) {
+//      //                    15  *   255/30
+//      cAdjust[cI] = round(double(frameCounter + 1) * frameDiff[cI]);
+//    }
+//    for (uint16_t y = 0; y < imageHeight; y++) {
+//      if (xIn >= imageWidth) xFile = imageWidth - 1;
+//      if (yIn + y >= imageHeight) yFile = imageHeight -1 + y;
+//      if (seek(f, xFile, yFile)) {
+//        for (int16_t x = 0; x < xIn; x++) {
+//          if (xFile < imageWidth) {
+//            uint8_t bgr[4];
+//            if (f.read(bgr, bytesPerPixel) != bytesPerPixel) {
+//              imageBuffer[bufferCount++] = 0;
+//              imageBuffer[bufferCount++] = 0;
+//              imageBuffer[bufferCount++] = 0;
+//              if (bytesPerPixel == 4) imageBuffer[bufferCount++] = 0;  //Write zeros
+//            } else {
+//              for (byte i = 0; i < bytesPerPixel; i++) {                
+//                imageBuffer[bufferCount++] = min(bgr[i] + cAdjust[i], 255);
+//              }            
+//  //            imageBuffer[bufferCount++] = min(bgr[0] + , 255);
+//  //            imageBuffer[bufferCount++] = min(bgr[1] + , 255);
+//  //            imageBuffer[bufferCount++] = min(bgr[2] + , 255);
+//  //            if (bytesPerPixel == 4) imageBuffer[bufferCount++] = min(bgr[3] + , 255);
+//              xFile++;
+//            }
+//          }
+//        }
+//      }
+//    }
+//  }
+//  spriteSheet = new NeoVerticalSpriteSheet<NeoBufferMethod<NeoGrbFeature>>(imageWidth * imageHeight, frames, 1, imageBuffer);  
+//  return true;
+//}
+
+// Frames = 10, cStart = [0,0,0] cEnd = [255,255,255] cAdjust = [0 + 255-0/10 * f]
+// BiLinear Blend: 
+//  Upper Left: cStart 
+//  Lower Right: cEnd
+//  Upper Right & Lower Left: value in file
+bool loadSpriteFile(File f, uint16_t xIn, uint16_t yIn, uint16_t blendFramesNum, uint8_t cStartIn[], uint8_t cEndIn[]) {
+  uint8_t tbuf[1];
+  f.read(tbuf, 1);
+  uint8_t frames = tbuf[0];
+  spriteFrames = frames;
+  free(imageBuffer);
+  String imgParams = "X: " + String(xIn) + ", Y: " + String(yIn) + ", Frames: " + String(frames) + ", BlendFrames: " + String(blendFramesNum);
+  imgParams += ", Start: (" + String(cStartIn[0]) + ", " + String(cStartIn[1]) + ", " + String(cStartIn[2]) + ")";
+  imgParams += ", End: (" + String(cEndIn[0]) + ", " + String(cEndIn[1]) + ", " + String(cEndIn[2]) + ")";
+  Serial.println(imgParams);
+  uint8_t bgr[bytesPerPixel];
+  imageBuffer = (uint8_t *)malloc(bytesPerPixel * xIn * yIn * frames);
+  int bufferCount = 0;
+  double frameDiff[bytesPerPixel];
+  float progress = 0;
+  RgbColor cStart = RgbColor(cStartIn[0], cStartIn[1], cStartIn[2]);
+  RgbColor cEnd = RgbColor(cEndIn[0], cEndIn[1], cEndIn[2]);
+  //for (byte fI = 0; fI < bytesPerPixel; fI++) {
+  //  frameDiff[fI] = double(cEndIn[fI] - cStartIn[fI]) / double(frames);
+  //}
+  for (uint16_t frameCounter = 0; frameCounter < frames; frameCounter++) {
+    if (frameCounter > blendFramesNum) {
+      cStart = RgbColor(0,0,0);
+      cEnd = RgbColor(0,0,0);
+    }
+    //byte cAdjust[bytesPerPixel];
+    //for (byte cI = 0; cI < bytesPerPixel; cI++) {
+      //                  ex:  15  *   255/30
+      progress = double(frameCounter + 1) / double(blendFramesNum);
+      //cAdjust[cI] = cStart[cI] + round(double(frameCounter + 1) * frameDiff[cI]);
+    //}
+    for (uint16_t y = 0; y < yIn; y++) {
+      for (uint16_t x = 0; x < xIn; x++) {          
+        //Serial.println("Pre_rgb: " + String(bgr[0]) + ", " + String(bgr[1]) + ", " + String(bgr[2]));
+        f.read(bgr, bytesPerPixel);
+        RgbColor spriteColor = RgbColor(bgr[0], bgr[1], bgr[2]);
+        RgbColor result = RgbColor::BilinearBlend(
+          cStart,                 //Upper Left
+          spriteColor,            //Upper Right
+          spriteColor,            //Lower Left
+          cEnd,                   //Lower Right
+          progress,               //X axis
+          0.5f                    //Y axis
+        );
+        //Serial.println("post_rgb: " + String(result.R) + ", " + String(result.G) + ", " + String(result.B));
+        //Sprite object uses the NeoGrbFeature which expects GRB
+        imageBuffer[bufferCount++] = result.G; 
+        imageBuffer[bufferCount++] = result.R;
+        imageBuffer[bufferCount++] = result.B;       
+      }
+    }
+  }
+  delete spriteSheet;
+  spriteSheet = new NeoVerticalSpriteSheet<NeoBufferMethod<NeoGrbFeature>>(xIn * yIn, frames, 1, imageBuffer);  
+  return true;
+}
+
+//bool seek(File f, uint16_t x, uint16_t y) { //Used from bitmap data extraction
+//  if (bottomToTop) {
+//    y = (spriteFrames - 1) - y;
+//  }
+//  uint32_t pos = y * sizeRow + x * bytesPerPixel;
+//  pos += fileAddressPixels;
+//  return f.seek(pos, SeekCur);
+//}
+
+bool spriteParse() {
+  char buf[256];
+  char *tok;
+  Serial.print("Sprite to parse: ");
+  Serial.println(play);
+  //Make sure all arguments are present
+  int rgbCount = 0;
+  int sCount = 0;
+  int tCount = 0;
+  int fCount = 0;
+  int xCount = 0;
+  int yCount = 0;
+  int aCount = 0;
+  int i = 0;
+  int commaCount = 0;
+  play.toCharArray(buf, 256);
+
+  tok = strtok(buf, " ");  //Assumes SPRITE
+
+  while (tok = strtok(NULL, " ")) {
+    char c = tok[0];
+    switch(c) {
+      case 'r':
+        if (tok[1] != 'g' || tok[2] != 'b') return false;
+        i = 3;
+        commaCount = 0;
+        while (tok[i] != '\0' && i < 14) {
+          if (isDigit(tok[i])) {
+            i++;
+          } else if (tok[i] == ',') {
+            commaCount++;
+            i++;
+          } else {
+            return false;
+          }          
+        }
+        if (commaCount != 2) return false;
+        rgbCount++;
+        break;
+      case 's':
+        if (tok[1] == '\'') {
+          i = 2;
+          while (tok[i] != '\'' && i < 63) {
+            switch (tok[i]) {
+              case '\0':
+              case '\\':
+              case '/':
+              case ':':
+              case '*':
+              case '"':
+              case '<':
+              case '>':
+              case '|':
+              case '?':
+                return false;
+              default:
+                i++;
+            }
+          }
+          if (tok[i] != '\'' || i < 3) return false;
+        } else if (!checkDigits(1, tok)) {
+          return false;
+        }
+        sCount++;
+        break;
+      case 't':
+        if (!checkDigits(1, tok)) return false;
+        tCount++;
+        break;
+      case 'f':
+        if (!checkDigits(1, tok)) return false;
+        fCount++;
+        break;
+      case 'x':
+        if (!checkDigits(1, tok)) return false;
+        xCount++;
+        break;
+      case 'y':
+        if (!checkDigits(1, tok)) return false;
+        yCount++;
+        break;
+      case 'a':
+        if (!checkDigits(1, tok)) return false;
+        aCount++;
+        break;
+      default:
+        return false;
+    }
+  }
+
+  if (rgbCount == 2 && sCount == 1 && tCount == 1 && fCount == 1 && xCount == 1 && yCount == 1 && aCount == 1) return true;
+  else return false;
+}
+
+bool checkDigits(int index, char* arr) {
+  while (arr[index] != '\0' && index < 63) {
+    if (!isDigit(arr[index])) return false;
+    index++;
+  }
+  return true;
+}
+
+int getDigits(int index, char* arr) {
+  char temp[12];
+  int i = 0;
+  while (arr[i+index] != '\0' && i < 11) {
+    temp[i] = arr[i+index];
+    i++;
+  }
+  temp[i] = '\0';
+  return atoi(temp);
+}
+
+// T variable is for number of times the animation runs
+// RGB variables transition the pixels from one color to the next across the frames
+// F the number of frames to apply the color transition effect to
+// A is the amount of time each frame is displayed or milliseconds per frame.
+// S is for the sprite number to play or a filename enclosed in single quotes
+// X and Y are for the sprite file x and y lengths. 
+// This may be changed to the pixels x and y limits to allow a sprite that is wider or longer than what can be represented by pixels
+
+bool handleSprite() { //SPRITE rgb255,0,0 rgb0,0,255 t10 f30 s1 x4 y3 a60
+                      //SPRITE rgb255,0,0 rgb0,0,255 t10 f30 s'filename.bmp' x8 y32 a60
+  if (!spriteParse()) {
+    Serial.println("Sprite failed to parse");
+    return false;
+  }
+  char buf[256];
+  char *tok;
+
+  bytesPerPixel = 3; //Set bytes per pixel to 3 as default
+  //Incoming Parameters
+  String filename = "/";
+  uint8_t colorStart[3]  = {0, 0, 0};
+  uint8_t colorEnd[3] = {0, 0, 0};
+  char cTemp[4] = {'\0'};
+  bool firstColor = true;
+  uint32_t timeRepeats = 0;
+  uint32_t numFrames = 0;
+  int8_t fileNum = -1;
+  uint16_t x = 0;
+  uint16_t y = 0;
+  int i = 0;
+  int tI = 0;
+  int cI = 0;
+  Serial.print("Sprite to tokenize");Serial.println(play);
+  play.toCharArray(buf, 256);
+  tok = strtok(buf, " ");     //Discards command SPRITE
+  Serial.print("First token: ");Serial.println(tok);
+  while (tok = strtok(NULL, " ")) {
+    Serial.print("Next token: ");Serial.println(tok);
+    char c = tok[0];
+    switch (c) {
+      case 'r':
+        char temp[12];
+        i = 0;
+        while (tok[3+i] != '\0' && i < 11) {
+          temp[i] = tok[3+i];
+          i++;
+        }
+        temp[i] = '\0';        
+        i = 0;
+        tI = 0;
+        cI = 0;
+        do {         
+          if (temp[i] == ',' || temp[i] == '\0') {
+            cTemp[tI] = '\0';
+            if (firstColor){
+              colorStart[cI] = atoi(cTemp);              
+            } else {
+              colorEnd[cI] = atoi(cTemp);
+            }
+            if (temp[i] == '\0') {
+              break;
+            }
+            tI = 0;
+            cI++;
+          } else {
+            cTemp[tI] = temp[i];
+            tI++;
+          }
+          i++;
+        } while (i < 11);
+        firstColor = false;
+        
+        break;
+      case 't':
+        timeRepeats = getDigits(1, tok);
+        break;
+      case 'f':
+        numFrames = getDigits(1, tok);
+        break;
+      case 'a':
+        spriteAnimationTime = getDigits(1, tok);
+        break;
+      case 's':
+        if (tok[1] == '\'') {
+          i = 2;
+          while (tok[i] != '\'') {
+            filename += String(tok[i]);
+            i++;
+          }
+        } else {
+          fileNum = getDigits(1, tok);
+        }
+        break;
+      case 'x':
+        x = getDigits(1, tok);
+        break;
+      case 'y':
+        y = getDigits(1, tok);
+        break;
+      default:
+        return false;
+    }
+  }
+  Serial.print("Last token: ");Serial.println(tok);
+
+  if (fileNum > 0) {
+    filename += "sp" + String(fileNum);
+  }
+  Serial.print("Filename: ");Serial.println(filename);
+  File f = SPIFFS.open(filename, "r");
+  if (!f) {
+    Serial.println(F("file open failed"));
+    return false;
+  }
+//    if (!readBitmapInfo(f)) { //If loading failed play what's in memory
+//      Serial.println(F("Failed to get bitmap info"));
+//      f.close();
+//      playingSprite = true;
+//      indexSprite = 0;
+//      animations.StartAnimation(0, 60, LoopAnimUpdate);
+//      return true;
+//    }
+  Serial.print("First RGB: ");Serial.println(String(colorStart[0]) + ":" + String(colorStart[1]) + ":" + String(colorStart[2]));
+  Serial.print("Second RGB: ");Serial.println(String(colorEnd[0]) + ":" + String(colorEnd[1]) + ":" + String(colorEnd[2]));
+
+  if (!loadSpriteFile(f, x, y, numFrames, colorStart, colorEnd)) {
+    Serial.println(F("Failed to convert bitmap into memory"));
+    f.close();
+    return false;
+  }
+  
+  f.close();
+  blankFrame();
+  playingSprite = true;
+  indexSprite = 0;
+  spriteCounter = 0;
+  //spriteFrames = numFrames;
+  spriteRepeat = timeRepeats;
+  animations.StartAnimation(0, spriteAnimationTime, LoopAnimUpdate);
+  return true;
+}
+
+void spriteSetup() {  //Loads default sprite object
+  free(imageBuffer);
+  delete spriteSheet;
+  spriteCounter = 0;
+  imageBuffer = (uint8_t *)malloc(3 * 16 * 20);  //Bytes per Pixel * Pixels * Frames
+  uint8_t tempBuffer[] = {  // (16 x 20) GRB in Hexadecimal
+    //{<-------------->} ONE PIXEL    
+       0x00, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, //
+       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, //ONE FRAME BLOCK
+       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // 
+       
+       0x00, 0x3f, 0x00, 0x00, 0xff, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,     
+       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+       
+       0x00, 0x00, 0x00, 0x00, 0x3f, 0x00, 0x00, 0x7f,    0x00, 0x00, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 
+       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,     
+       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+       
+       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x3f, 0x00, 0x00, 0x7f, 0x00, 0x00, 
+       0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,     
+       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+       
+       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+       0x3f, 0x00, 0x00, 0x7f, 0x00, 0x00, 0xff, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,     
+       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+       
+       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3f, 0x00,    0x00, 0x7f, 0x00, 0x00, 0xff, 0x00, 0x00, 0x00,     
+       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+       
+       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x3f, 0x00, 0x00, 0x7f,     
+       0x00, 0x00, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+       
+       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,     
+       0x00, 0x00, 0x3f, 0x00, 0x00, 0x7f, 0x00, 0x00,    0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+       
+       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,     
+       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x3f, 0x00, 0x00, 0xff, 0x00, 0x00, 0x00, 0x00,
+       
+       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,     
+       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0x00,
+       
+       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,     
+       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0x00,
+       
+       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,     
+       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0xff, 0x00, 0x00, 0x3f, 0x00,
+       
+       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,     
+       0x00, 0x00, 0x01, 0x00, 0x00, 0xff, 0x00, 0x00,    0x7e, 0x00, 0x00, 0x3e, 0x00, 0x00, 0x00, 0x00,
+       
+       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0xff,     
+       0x00, 0x00, 0x7e, 0x00, 0x00, 0x3e, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+       
+       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00,    0x00, 0xff, 0x00, 0x00, 0x7e, 0x00, 0x00, 0x3e,     
+       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+       
+       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+       0x01, 0x00, 0x00, 0xff, 0x00, 0x00, 0x7e, 0x00,    0x00, 0x3e, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,     
+       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+       
+       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x01, 0x00, 0x00, 0xff, 0x00, 0x00, 
+       0x7e, 0x00, 0x00, 0x3e, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,     
+       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+       
+       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff,    0x00, 0x00, 0x7f, 0x00, 0x00, 0x3e, 0x00, 0x00, 
+       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,     
+       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+       
+       0x00, 0x00, 0x00, 0x00, 0xff, 0x00, 0x00, 0x3f,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,     
+       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+       
+       0x00, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,     
+       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 
+  };
+  for (int i = 0; i < 3*16*20; i++) {
+    imageBuffer[i] = tempBuffer[i];
+  }
+  indexSprite = 0;
+  spriteCounter = 0;
+  spriteFrames = 20;
+  spriteRepeat = 100;
+  spriteSheet = new NeoVerticalSpriteSheet<NeoBufferMethod<NeoGrbFeature>>(16, 20, 1, imageBuffer);  
+}
+
 
