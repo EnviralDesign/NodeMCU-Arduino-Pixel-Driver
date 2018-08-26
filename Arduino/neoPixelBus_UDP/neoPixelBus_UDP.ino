@@ -15,6 +15,16 @@
 #define DRD_TIMEOUT 10
 #define DRD_ADDRESS 0
 
+// UDP Poll Opcodes
+#define CHUNKIDMIN 0
+#define CHUNKIDMAX 99
+#define UPDATEFRAME 100
+#define POLL 200
+#define POLLREPLY 201
+#define NOPACKET -1
+#define UDPID "EnviralDesignPxlNode"
+#define IDLENGTH 20
+
 #define min(a,b) ((a)<(b)?(a):(b))
 #define max(a,b) ((a)>(b)?(a):(b))
 
@@ -109,7 +119,7 @@ RgbColor InitialColor;
 RgbColor LastColor=RgbColor(0,0,0);  //hold the last colour in order to stitch one effect with the following.
 
 
-byte action;
+//byte action;
 
 // used later for holding values - used to dynamically limit brightness by amperage.
 RgbColor prevColor;
@@ -124,7 +134,7 @@ WiFiUDP udp;
 ESP8266WebServer server(80);
 
 // Reply buffer, for now hardcoded but this might encompass useful data like dropped packets etc.
-byte ReplyBuffer[] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+byte ReplyBuffer[IDLENGTH + 1 + MAX_NAME_LENGTH + 16] = {0};
 byte counterHolder = 0;
 
 //last number of frames to monitor monitoring //MDB
@@ -137,7 +147,7 @@ byte part=0;
 
 struct framesMetaData {
           unsigned int frame;
-          byte part;
+          int part;
           long arrivedAt;
           int packetSize;
           int power; 
@@ -235,8 +245,10 @@ void setup() {
   Serial.println(udpPacketSize);
 
   Serial.println("Setup done");
-  Serial.println("");
-  Serial.println("");
+  Serial.println("Opcodes");
+  Serial.print("Poll: ");Serial.println((char)POLL);
+  Serial.print("PollReply: ");Serial.println((char)POLLREPLY);
+  Serial.print("Update: ");Serial.println((char)UPDATEFRAME);
   Serial.println("");
 
   // Initial full black strip push and init.
@@ -529,6 +541,40 @@ void setup() {
   server.begin();
 }
 
+void loop() { //main program loop
+  int opcode = parseUdpPoll();
+  // opcodes between 0 and 100 represent the chunkID
+  if (opcode <= CHUNKIDMAX) {
+    if(streaming) {
+      playStreaming(opcode);
+    } else if (playingSprite){
+      if (spriteCounter < spriteRepeat) {
+        animations.UpdateAnimations();
+        strip->Show();
+      } else {
+        blank();
+      }
+    } else {
+//      int packetSize = udp.parsePacket();
+//      if (packetSize > 0) udp.read();  //remove any udp packet from buffer while in effect mode
+      if(!playEffect()) { //when last frame of last effect switch back to streaming mode
+        streaming=true;
+      };
+      delay(16);
+    };
+  } else if (opcode == UPDATEFRAME) {
+    udpUpdateDevice();
+  } else if (opcode == POLL) {
+    udpSendPollReply();
+  } else if (opcode == POLLREPLY) {
+    //POLLREPLY
+  } else {
+    Serial.println("Invalid opcode");
+  }
+  ftpSrv.handleFTP();
+  server.handleClient();
+}
+
 void blankFrame() {
   paintFrame(RgbColor(0,0,0));
 };
@@ -719,29 +765,6 @@ int getTimes(String params) {
   return t;
 }
 
-
-void loop() { //main program loop
-  if(streaming) {
-    playStreaming();
-  } else if (playingSprite){
-    if (spriteCounter < spriteRepeat) {
-      animations.UpdateAnimations();
-      strip->Show();
-    } else {
-      blank();
-    }
-  } else {
-    int packetSize = udp.parsePacket();
-    if (packetSize > 0) udp.read();  //remove any udp packet from buffer while in effect mode
-    if(!playEffect()) { //when last frame of last effect switch back to streaming mode
-      streaming=true;
-    };
-    delay(16);
-  };
-  ftpSrv.handleFTP();
-  server.handleClient();
-}
-
 boolean playEffect() {
   Serial.println(play);
   if(frame==0) {  // frame zero means to go get a command line from the HTTP request body
@@ -813,92 +836,91 @@ boolean playEffect() {
  return true;
 }
 
-
-
-void playStreaming() {
+void playStreaming(int chunkID) {
   // if there's data available, read a packet
- // digitalWrite(BUILTIN_LED,LOW);
- if(lastStreamingFrame!=0 && millis()-lastStreamingFrame>STREAMING_TIMEOUT*1000) {
-  blankFrame();
-  lastStreamingFrame=0;
- }
-  int packetSize = udp.parsePacket();
-  if (packetSize > 0)
-  {
+  if(lastStreamingFrame!=0 && millis()-lastStreamingFrame>STREAMING_TIMEOUT*1000) {
+    blankFrame();
+    lastStreamingFrame=0;
+  }
+  //int packetSize = udp.parsePacket();
+  if (chunkID != NOPACKET) {
     //take initial time //MDB
     arrivedAt=micros();
    
     // read the packet into packetBufffer
-    udp.read(packetBuffer, udpPacketSize);
+    //udp.read(packetBuffer, udpPacketSize);
 
-    action = packetBuffer[0];
+    //action = packetBuffer[0];
    
     //Serial.println(String(frameIndex)+":"+frameNumber+" - "+String(action)+" "+String(packetSize)+"/"+String(udpPacketSize)); 
     
     if (DEBUG_MODE) { // If Debug mode is on print some stuff
       Serial.println("---Incoming---");
-      Serial.print("Packet Size: ");
-      Serial.println(packetSize);
-      Serial.print("Action: ");
-      Serial.println(action);
+      Serial.print("ChunkID: ");
+      Serial.println(chunkID);
+//      Serial.print("Action: ");
+//      Serial.println(action);
     }
     
-    if (action != 0)
-    { // if action byte is anything but 0 (this means we're receiving some portion of our rgb pixel data..)
+//    if (chunkID != NOPACKET)
+//    { // if chunkID is anything but NOPACKET (this means we're receiving some portion of our rgb pixel data..)
 
-      framesMD[frameIndex].frame=frameNumber;
-      framesMD[frameIndex].part=action;
-      framesMD[frameIndex].arrivedAt=arrivedAt;
-      
-      // Figure out what our starting offset is.
-      const uint16_t initialOffset = chunkSize * (action - 1);
-      
-      if (DEBUG_MODE) { // If Debug mode is on print some stuff
-        Serial.print("---------: ");
-        Serial.print(chunkSize);
-        Serial.print("   ");
-        Serial.println((action - 1));
-        Serial.println("");
-        Serial.print("Init_offset: ");
-        Serial.println(initialOffset);
-        Serial.print(" ifLessThan: ");
-        Serial.println((initialOffset + chunkSize));
-      }
+    framesMD[frameIndex].frame=frameNumber;
+    framesMD[frameIndex].part=chunkID;
+    framesMD[frameIndex].arrivedAt=arrivedAt;
+    
+    // Figure out what our starting offset is.
+    //const uint16_t initialOffset = chunkSize * (action - 1);
+    const uint16_t initialOffset = chunkSize * chunkID;
+    
+    if (DEBUG_MODE) { // If Debug mode is on print some stuff
+      Serial.print("---------: ");
+      Serial.print(chunkSize);
+      Serial.print("   ");
+      //Serial.println((action - 1));
+      Serial.println("");
+      Serial.print("Init_offset: ");
+      Serial.println(initialOffset);
+      Serial.print(" ifLessThan: ");
+      Serial.println((initialOffset + chunkSize));
+    }
 
-      // loop through our recently received packet, and assign the corresponding
-      // RGB values to their respective places in the strip.
-      if(action<=MAX_ACTION_BYTE) { //check the ation byte is within limits
-        uint16_t led=0;
-        for (uint16_t i = 1; i < chunkSize*3;) {
+    // loop through our recently received packet, and assign the corresponding
+    // RGB values to their respective places in the strip.
+    //if(action<=MAX_ACTION_BYTE) { //check the ation byte is within limits
+    uint16_t led=0;
+    for (uint16_t i = IDLENGTH + 1; i < (IDLENGTH + chunkSize*3);) {
 
-          r = packetBuffer[i++];
-          g = packetBuffer[i++];
-          b = packetBuffer[i++];
+      r = packetBuffer[i++];
+      g = packetBuffer[i++];
+      b = packetBuffer[i++];
 
-          strip->SetPixelColor(initialOffset+led++, colorGamma.Correct(RgbColor(r, g, b))); // this line uses gamma correction
-          milliAmpsCounter += (r + g + b); // increment our milliamps counter accordingly for use later.
-        }
-      }
+      strip->SetPixelColor(initialOffset+led++, colorGamma.Correct(RgbColor(r, g, b))); // this line uses gamma correction
+      milliAmpsCounter += (r + g + b); // increment our milliamps counter accordingly for use later.
+    }
+    
 
-      if (DEBUG_MODE) { // If Debug mode is on print some stuff
-        Serial.println("Finished For Loop!");
-      }
+    if (DEBUG_MODE) { // If Debug mode is on print some stuff
+      Serial.println("Finished For Loop!");
+    }
 
-      // if we're debugging packet drops, modify reply buffer.
-      if (PACKETDROP_DEBUG_MODE) {
-        ReplyBuffer[action] = 1;
-      }
+    // if we're debugging packet drops, modify reply buffer.
+    if (PACKETDROP_DEBUG_MODE) {
+      //ReplyBuffer[action] = 1;
+      ReplyBuffer[chunkID] = 1;
+    }
 
-      if (packetSize != udpPacketSize)
-      { // if our packet was not full, it means it was also a terminating update packet.
-        action = 0;
-      }
-      framesMD[frameIndex].packetSize=packetSize;
+//      if (packetSize != udpPacketSize)
+//      { // if our packet was not full, it means it was also a terminating update packet.
+//        action = 0;
+//      }
+      // Packetsize is no longer available in this scope
+      framesMD[frameIndex].packetSize=0;
       framesMD[frameIndex].power=0;
       framesMD[frameIndex].adjustedPower=0;
       framesMD[frameIndex].processingTime=micros()-framesMD[frameIndex].arrivedAt;
       frameIndex=(frameIndex +1) % framesToMonitor;
-      packetSize=0; // implicit frame 0 will have packetSize == 0  MDBx
+      //packetSize=0; // implicit frame 0 will have packetSize == 0  MDBx
       arrivedAt=micros();
     }
 
@@ -906,10 +928,9 @@ void playStreaming() {
     // for this frame and we should update the actual rgb vals to the strip!
     //framesMD[frameIndex].frame=frameNumber+1;  //MDBx
     
-    if (action == 0)
-    {
+    else if (chunkID == NOPACKET) {
       framesMD[frameIndex].frame=frameNumber;
-      framesMD[frameIndex].part=action;
+      framesMD[frameIndex].part=chunkID;
       framesMD[frameIndex].arrivedAt=arrivedAt;
 
       pinMode(BUILTIN_LED, OUTPUT);
@@ -987,7 +1008,7 @@ void playStreaming() {
       Serial.println("");
     }
     
-  }
+  
   //delay(0);
 
 }
@@ -1200,8 +1221,10 @@ void startNeoPixelBus() {
 }
 
 void setUdpPacketSize() {
-  if (packetBuffer) free(packetBuffer);  
-  udpPacketSize = ((chunkSize*3)+1);
+  if (packetBuffer) free(packetBuffer);
+  //UDP max packet size is the UDP ID + OPCODE + ( RGB[chunksize][3] OR Update size )
+  // Update size MAX_NAME_LENGTH + sizeof(PixelsPerStrip, ChunkSize, UdpPort, AmpsLimit, MaPerPixel, WarmUpColor)
+  udpPacketSize = ( IDLENGTH + 1 + max( (chunkSize*3), (MAX_NAME_LENGTH  + 13) ) );
   packetBuffer = (byte *)malloc(udpPacketSize);//buffer to hold incoming and outgoing packets
 }
 
@@ -1784,4 +1807,129 @@ void spriteSetup() {  //Loads default sprite object
   spriteSheet = new NeoVerticalSpriteSheet<NeoBufferMethod<NeoGrbFeature>>(16, 20, 1, imageBuffer);  
 }
 
+// Examines the first 20 bytes of a udp packet to determine if it matches 'EnviralDesignPxlNode'
+// Return
+int parseUdpPoll() {
+  int packetSize = udp.parsePacket();
+  
+  if (!packetSize) {
+    return NOPACKET;
+  }
 
+  udp.read(packetBuffer, udpPacketSize);
+  for (int j = 0; j < udpPacketSize; j++) {
+    Serial.print(packetBuffer[j]);Serial.print(":");
+    Serial.print((char)packetBuffer[j]);Serial.print(" ");
+    
+  }
+  Serial.println("EndPacket");
+  int i = 0;
+  for (; i < IDLENGTH; i++) {
+    Serial.print(UDPID[i]);Serial.print(" ");
+    if (packetBuffer[i] != UDPID[i]) {
+      Serial.println("Mismatch");
+      return NOPACKET;
+    }
+  }  
+  Serial.println("Matched");
+  return packetBuffer[i];
+}
+
+void udpUpdateDevice() {
+  // Set packetbuffer index past the ID and OpCode bytes
+  int i = IDLENGTH + 1;
+  // Get the device name and save it to a buffer
+  char nameBuf[MAX_NAME_LENGTH];
+  for (int j = 0; j < MAX_NAME_LENGTH; j++) {
+    nameBuf[j] = packetBuffer[i++];
+  }
+  nameBuf[MAX_NAME_LENGTH - 1] = '\0';
+  updateName(String(nameBuf));
+  byte valBuf[3];
+  
+  valBuf[0] = packetBuffer[i++];
+  valBuf[1] = packetBuffer[i++];
+  updatePixels(valBuf[0] * 256 + valBuf[1]);
+  
+  valBuf[0] = packetBuffer[i++];
+  valBuf[1] = packetBuffer[i++];
+  updateChunk(valBuf[0] * 256 + valBuf[1]);
+  
+  valBuf[0] = packetBuffer[i++];
+  valBuf[1] = packetBuffer[i++];
+  updateUDP(valBuf[0] * 256 + valBuf[1]);
+  
+  FLOAT_ARRAY tempF;
+  for (int j = 0; j < 4; j++) {
+    tempF.bytes[j] = packetBuffer[i++];
+  }
+  updateAmps(tempF.num);
+  //updateAmps((float)packetBuffer[i++] + ((float)packetBuffer[i++]/256.0));
+  
+  valBuf[0] = packetBuffer[i++];
+  valBuf[1] = packetBuffer[i++];
+  updateMA(valBuf[0] * 256 + valBuf[1]);
+  
+  valBuf[0] = packetBuffer[i++];
+  valBuf[1] = packetBuffer[i++];
+  valBuf[2] = packetBuffer[i++];
+  updateWarmUp(valBuf[0], valBuf[1], valBuf[2]);
+  
+}
+ 
+void udpSendPollReply() {
+  int i = 0;
+  for (; i < IDLENGTH; i++) {
+    ReplyBuffer[i] = UDPID[i];
+  }
+  // Set opcode to POLLREPLY
+  ReplyBuffer[i++] = POLLREPLY;
+
+  //Copy device name to reply buffer
+  for (int j = 0; j < MAX_NAME_LENGTH; j++) {
+    ReplyBuffer[i++] = deviceName[j];
+  }
+  
+  //Copy pixelsPerStrip value
+  ReplyBuffer[i++] = highByte(pixelsPerStrip);
+  ReplyBuffer[i++] = lowByte(pixelsPerStrip);
+
+  //Copy chunkSize value
+  ReplyBuffer[i++] = highByte(chunkSize);
+  ReplyBuffer[i++] = lowByte(chunkSize);
+
+  //Copy udpPort value
+  ReplyBuffer[i++] = highByte(udpPort);
+  ReplyBuffer[i++] = lowByte(udpPort);
+
+  //Copy amp limit value
+  FLOAT_ARRAY tempf;
+  tempf.num = milliAmpsLimit;
+  for (int j = 0; j < 4; j++) {
+    ReplyBuffer[i++] = tempf.bytes[j];
+  }
+
+  //Copy the ma per pixel
+  ReplyBuffer[i++] = highByte(mAPerPixel);
+  ReplyBuffer[i++] = lowByte(mAPerPixel);
+
+  //Copy the warmup color
+  ReplyBuffer[i++] = InitColor[0];
+  ReplyBuffer[i++] = InitColor[1];
+  ReplyBuffer[i++] = InitColor[2];
+  ReplyBuffer[i] = '\0';
+  Serial.print("Sending message to ");Serial.println(udp.remoteIP());
+  Serial.println("Contents: ");
+  for (i = 0; i < sizeof(ReplyBuffer); i++) {
+    Serial.print(ReplyBuffer[i]);Serial.print(":");
+    Serial.print((char)ReplyBuffer[i]);Serial.print(" ");
+  }
+  Serial.println("EndReplyBuffer");
+  udp.beginPacket(udp.remoteIP(), UDP_PORT_OUT);
+  // clear the response buffer string.
+  for (i = 0; i < sizeof(ReplyBuffer); i++) {
+    udp.write(ReplyBuffer[i]);
+    ReplyBuffer[i] = 0;
+  }
+  udp.endPacket();
+}
