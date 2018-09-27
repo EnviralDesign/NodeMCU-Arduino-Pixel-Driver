@@ -106,6 +106,8 @@ uint8_t *imageBuffer;
 uint16_t indexSprite;
 bool playingSprite = false;
 String spritelastfile = "";
+uint8_t lastColorStart[3];
+uint8_t lastColorEnd[3];
 
 // holds chunksize x 3(chans per led) + 1 "action" byte
 uint16_t udpPacketSize;
@@ -1390,7 +1392,7 @@ void LoopAnimUpdate(const AnimationParam& param) {
 //  Upper Left: cStart 
 //  Lower Right: cEnd
 //  Upper Right & Lower Left: value in file
-bool loadSpriteFile(File f, uint16_t xIn, uint16_t yIn, uint16_t blendFramesNum, uint8_t cStartIn[], uint8_t cEndIn[]) {
+bool loadSpriteFile(File f, uint8_t cStartIn[], uint8_t cEndIn[]) {
 
   // Read the headers in the file
   uint8_t tbuf[4];
@@ -1401,11 +1403,10 @@ bool loadSpriteFile(File f, uint16_t xIn, uint16_t yIn, uint16_t blendFramesNum,
 
   // Header2 holds num of frames in sprite file
   uint8_t frames = tbuf[2] * 256 + tbuf[3];
-  
-  spriteFrames = frames;
+ 
   free(imageBuffer);
   
-  String imgParams = "X: " + String(xIn) + ", Y: " + String(yIn) + ", Frames: " + String(frames) + ", BlendFrames: " + String(blendFramesNum);
+  String imgParams = "Frames: " + String(frames);
   imgParams += ", Start: (" + String(cStartIn[0]) + ", " + String(cStartIn[1]) + ", " + String(cStartIn[2]) + ")";
   imgParams += ", End: (" + String(cEndIn[0]) + ", " + String(cEndIn[1]) + ", " + String(cEndIn[2]) + ")";
   imgParams += ", XY: " + String(xy) + ", BufferSize: " + String(bytesPerPixel * pixelsPerStrip * frames);
@@ -1413,37 +1414,32 @@ bool loadSpriteFile(File f, uint16_t xIn, uint16_t yIn, uint16_t blendFramesNum,
   
   uint8_t rgb[bytesPerPixel];
   imageBuffer = (uint8_t *)malloc(bytesPerPixel * pixelsPerStrip * frames);
+
+  // Size of 1 frame
   uint32_t tempBufferSize = xy * bytesPerPixel;
   uint8_t tempImageBuffer[tempBufferSize];
+  
+  // Initialize all values to 0
   for (uint16_t i = 0; i < tempBufferSize; i++) {
     tempImageBuffer[i] = 0;
   }
   
-  int bufferCount = 0;
-  double frameDiff[bytesPerPixel];
+  uint16_t bufferCount = 0;
   float progress = 0;
 
   RgbColor cStart = RgbColor(cStartIn[0], cStartIn[1], cStartIn[2]);
   RgbColor cEnd = RgbColor(cEndIn[0], cEndIn[1], cEndIn[2]);
 
+  bool shouldBlend = true;
   if (!(cStart.R || cStart.G || cStart.B || cEnd.R || cEnd.G || cEnd.B)) {
-    blendFramesNum = 0;
+    shouldBlend = false;
   }
-  //for (byte fI = 0; fI < bytesPerPixel; fI++) {
-  //  frameDiff[fI] = double(cEndIn[fI] - cStartIn[fI]) / double(frames);
-  //}
   for (uint16_t frameCounter = 0; frameCounter < frames; frameCounter++) {
-    if (frameCounter > blendFramesNum) {
-      cStart = RgbColor(0,0,0);
-      cEnd = RgbColor(0,0,0);
-    }
-    //byte cAdjust[bytesPerPixel];
-    //for (byte cI = 0; cI < bytesPerPixel; cI++) {
-      //                  ex:  15  *   255/30
-      progress = double(frameCounter + 1) / double(blendFramesNum);
-      //cAdjust[cI] = cStart[cI] + round(double(frameCounter + 1) * frameDiff[cI]);
-    //}
+    // Calc progress along frames
+    progress = double(frameCounter + 1) / double(frames);
+
     uint32_t tempBufferCount = 0;
+    
     for (uint16_t i = 0; i < pixelsPerStrip; i++) {
       // If i is greater than the number of pixels given in the file then repeat previous information
       if (i < xy) {
@@ -1451,10 +1447,10 @@ bool loadSpriteFile(File f, uint16_t xIn, uint16_t yIn, uint16_t blendFramesNum,
         //Serial.println("Pre_rgb: " + String(rgb[0]) + ", " + String(rgb[1]) + ", " + String(rgb[2]));
         //If any of them have a color value then blend the transition colors
         if ( 
-              frameCounter < blendFramesNum &&                                         //The user wants frames to blend
-              (rgb[0] || rgb[1] || rgb[2]) &&                                          //The sprite file has value in it
-              (frameCounter != 0 || (cStart.R || cStart.G || cStart.B)) &&             // First frame has value
-              (frameCounter + 1 != blendFramesNum || (cEnd.R || cEnd.G || cEnd.B))     // Last frame or higher has value
+              shouldBlend &&                                                           // The user wants frames to blend
+              (rgb[0] || rgb[1] || rgb[2]) &&                                          // The sprite file pixel has value in it
+              (frameCounter != 0 || (cStart.R || cStart.G || cStart.B)) &&             // On first frame and initial blend has value
+              (frameCounter + 1 != frames || (cEnd.R || cEnd.G || cEnd.B))             // On last frame and last blend has value
            ) { 
           RgbColor spriteColor = RgbColor(rgb[0], rgb[1], rgb[2]);
           RgbColor result = RgbColor::BilinearBlend(
@@ -1497,41 +1493,14 @@ bool loadSpriteFile(File f, uint16_t xIn, uint16_t yIn, uint16_t blendFramesNum,
         }
       }      
     }
-//    for (uint16_t y = 0; y < yIn; y++) {
-//      for (uint16_t x = 0; x < xIn; x++) {          
-//        //Serial.println("Pre_rgb: " + String(bgr[0]) + ", " + String(bgr[1]) + ", " + String(bgr[2]));
-//        f.read(bgr, bytesPerPixel);
-//        RgbColor spriteColor = RgbColor(bgr[0], bgr[1], bgr[2]);
-//        RgbColor result = RgbColor::BilinearBlend(
-//          cStart,                 //Upper Left
-//          spriteColor,            //Upper Right
-//          spriteColor,            //Lower Left
-//          cEnd,                   //Lower Right
-//          progress,               //X axis
-//          0.5f                    //Y axis
-//        );
-//        //Serial.println("post_rgb: " + String(result.R) + ", " + String(result.G) + ", " + String(result.B));
-//        //Sprite object uses the NeoGrbFeature which expects GRB
-//        imageBuffer[bufferCount++] = result.G; 
-//        imageBuffer[bufferCount++] = result.R;
-//        imageBuffer[bufferCount++] = result.B;       
-//      }
-//    }
   }
   delete spriteSheet;
-  spriteSheet = new NeoVerticalSpriteSheet<NeoBufferMethod<NeoGrbFeature>>(pixelsPerStrip, frames, 1, imageBuffer);  
+  spriteSheet = new NeoVerticalSpriteSheet<NeoBufferMethod<NeoGrbFeature>>(pixelsPerStrip, frames, 1, imageBuffer);
+  spriteFrames = frames;
   return true;
 }
 
-//bool seek(File f, uint16_t x, uint16_t y) { //Used from bitmap data extraction
-//  if (bottomToTop) {
-//    y = (spriteFrames - 1) - y;
-//  }
-//  uint32_t pos = y * sizeRow + x * bytesPerPixel;
-//  pos += fileAddressPixels;
-//  return f.seek(pos, SeekCur);
-//}
-
+// Parses a sprite command and returns true if it follows a valid format
 bool spriteParse() {
   char buf[256];
   char *tok;
@@ -1542,9 +1511,6 @@ bool spriteParse() {
   int sCount = 0;
   int tCount = 0;
   int fCount = 0;
-  int xCount = 0;
-  int yCount = 0;
-  int aCount = 0;
   int i = 0;
   int commaCount = 0;
   play.toCharArray(buf, 256);
@@ -1605,24 +1571,12 @@ bool spriteParse() {
         if (!checkDigits(1, tok)) return false;
         fCount++;
         break;
-      case 'x':
-        if (!checkDigits(1, tok)) return false;
-        xCount++;
-        break;
-      case 'y':
-        if (!checkDigits(1, tok)) return false;
-        yCount++;
-        break;
-      case 'a':
-        if (!checkDigits(1, tok)) return false;
-        aCount++;
-        break;
       default:
         return false;
     }
   }
 
-  if (rgbCount == 2 && sCount == 1 && tCount == 1 && fCount == 1 && xCount == 1 && yCount == 1 && aCount == 1) return true;
+  if (rgbCount == 2 && sCount == 1 && tCount == 1 && fCount == 1) return true;
   else return false;
 }
 
@@ -1670,10 +1624,9 @@ bool handleSprite() { //SPRITE rgb255,0,0 rgb0,0,255 t10 f30 s1 x4 y3 a60
   char cTemp[4] = {'\0'};
   bool firstColor = true;
   uint32_t timeRepeats = 0;
-  uint32_t numFrames = 0;
+  uint32_t timePerAnimation = 0;
   int8_t fileNum = -1;
-  uint16_t x = 0;
-  uint16_t y = 0;
+  
   int i = 0;
   int tI = 0;
   int cI = 0;
@@ -1722,10 +1675,7 @@ bool handleSprite() { //SPRITE rgb255,0,0 rgb0,0,255 t10 f30 s1 x4 y3 a60
         timeRepeats = getDigits(1, tok);
         break;
       case 'f':
-        numFrames = getDigits(1, tok);
-        break;
-      case 'a':
-        spriteAnimationTime = getDigits(1, tok);
+        timePerAnimation = getDigits(1, tok);
         break;
       case 's':
         if (tok[1] == '\'') {
@@ -1738,12 +1688,6 @@ bool handleSprite() { //SPRITE rgb255,0,0 rgb0,0,255 t10 f30 s1 x4 y3 a60
           fileNum = getDigits(1, tok);
         }
         break;
-      case 'x':
-        x = getDigits(1, tok);
-        break;
-      case 'y':
-        y = getDigits(1, tok);
-        break;
       default:
         return false;
     }
@@ -1755,30 +1699,28 @@ bool handleSprite() { //SPRITE rgb255,0,0 rgb0,0,255 t10 f30 s1 x4 y3 a60
   }
   Serial.print("Filename: ");Serial.println(filename);
 
-  // If same file loaded before just replay sprite
-  if (filename != spritelastfile) {    
+  // If same file loaded before just replay sprite unless color transition changed
+  if (filename != spritelastfile || !compareArrays(colorStart, lastColorStart, bytesPerPixel) || !compareArrays(colorEnd, lastColorEnd, bytesPerPixel)) {
     File f = SPIFFS.open(filename, "r");
     if (!f) {
       Serial.println(F("file open failed"));
       return false;
     }
-  //    if (!readBitmapInfo(f)) { //If loading failed play what's in memory
-  //      Serial.println(F("Failed to get bitmap info"));
-  //      f.close();
-  //      playingSprite = true;
-  //      indexSprite = 0;
-  //      animations.StartAnimation(0, 60, LoopAnimUpdate);
-  //      return true;
-  //    }
+
     Serial.print("First RGB: ");Serial.println(String(colorStart[0]) + ":" + String(colorStart[1]) + ":" + String(colorStart[2]));
     Serial.print("Second RGB: ");Serial.println(String(colorEnd[0]) + ":" + String(colorEnd[1]) + ":" + String(colorEnd[2]));
   
-    if (!loadSpriteFile(f, x, y, numFrames, colorStart, colorEnd)) {
+    if (!loadSpriteFile(f, colorStart, colorEnd)) {
       Serial.println(F("Failed to convert bitmap into memory"));
       f.close();
       return false;
     }
-    spritelastfile = filename;    
+    spritelastfile = filename;
+    for (byte i = 0; i < bytesPerPixel; i++) {
+      lastColorStart[i] = colorStart[i];
+      lastColorEnd[i] = colorEnd[i];
+    }
+
     f.close();
   }
   
@@ -1786,9 +1728,18 @@ bool handleSprite() { //SPRITE rgb255,0,0 rgb0,0,255 t10 f30 s1 x4 y3 a60
   playingSprite = true;
   indexSprite = 0;
   spriteCounter = 0;
-  //spriteFrames = numFrames;
+  spriteAnimationTime = 16.66667 * double(timePerAnimation) / double(spriteFrames);   // ms per 1/60 sec * (seconds per animation) / (Frames per animation)
   spriteRepeat = timeRepeats;
   animations.StartAnimation(0, spriteAnimationTime, LoopAnimUpdate);
+  return true;
+}
+
+bool compareArrays(uint8_t arr1[], uint8_t arr2[], uint32_t len) {
+  for (uint32_t i = 0; i < len; i++) {
+    if (arr1[i] != arr2[i]) {
+      return false;
+    }
+  }
   return true;
 }
 
