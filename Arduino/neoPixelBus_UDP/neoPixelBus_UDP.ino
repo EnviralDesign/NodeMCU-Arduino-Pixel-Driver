@@ -21,6 +21,7 @@
 #define UPDATEFRAME 100
 #define POLL 200
 #define POLLREPLY 201
+#define CONFIG 202
 #define NOPACKET -1
 #define UDPID "EnviralDesignPxlNode"
 #define IDLENGTH 20
@@ -37,7 +38,7 @@ DoubleResetDetector drd(DRD_TIMEOUT, DRD_ADDRESS);
 String deviceName = "PxlNode-8266";
 
 // number of physical pixels in the strip.
-uint16_t pixelsPerStrip = 63;
+uint16_t pixelsPerStrip = 64;
 
 // This needs to be evenly divisible by PIXLES_PER_STRIP.
 // This represents how large our packets are that we send from our software source IN TERMS OF LEDS.
@@ -91,6 +92,7 @@ NeoPixelAnimator animations(1); //Number of animations
 NeoVerticalSpriteSheet<NeoBufferMethod<NeoGrbFeature>> *spriteSheet;
 
 //Variables used by Sprite Object
+#define MAX_SPRITESIZE 30000
 uint16_t spritePixels = 16;
 uint16_t spriteFrames = 20;
 uint32_t spriteCounter = 0;
@@ -121,8 +123,8 @@ RgbColor LastColor=RgbColor(0,0,0);  //hold the last colour in order to stitch o
 
 // used later for holding values - used to dynamically limit brightness by amperage.
 RgbColor prevColor;
-int milliAmpsLimit = amps * 1000;
-int milliAmpsCounter = 0;
+uint32_t milliAmpsLimit = amps * 1000;
+uint32_t milliAmpsCounter = 0;
 byte millisMultiplier = 0;
 
 // A UDP instance to let us send and receive packets over UDP
@@ -189,10 +191,11 @@ void setup() {
  
   ////////////////// A whole bunch of initialization stuff that prints no matter what.
   Serial.begin(115200);
-  Serial.println();
-  Serial.println();
-  Serial.println(F("Serial started")); 
-
+  if (DEBUG_MODE) {
+    Serial.println();
+    Serial.println();
+    Serial.println(F("Serial started")); 
+  }
   ed.setCompile(String(__TIME__));    //Compiling erases variables previously changed over the network
   ed.start();
  
@@ -222,10 +225,11 @@ void setup() {
 
   wifiManager.autoConnect("Enviral");
 
-  Serial.println("WiFi connected");
-  Serial.println("IP address: ");
-  Serial.println(WiFi.localIP());
-
+  if (DEBUG_MODE) {
+    Serial.println(F("WiFi connected"));
+    Serial.println(F("IP address: "));
+    Serial.println(WiFi.localIP());
+  }
   //SPIFFS Setup  FTP Server
   if (!SPIFFS.begin()) {
     Serial.println(F("Failed to mount file system"));
@@ -234,29 +238,27 @@ void setup() {
     }
   }
   ftpSrv.begin("esp8266", "esp8266");  //Username and password
-  Serial.println(F("Started FTP Server"));
+  if (DEBUG_MODE) {
+    Serial.println(F("Started FTP Server"));
+  }
   
   startUDP();
-  Serial.print("Local port: ");
-  Serial.println(udp.localPort());
-  Serial.print("Expected packagesize:");
-  Serial.println(udpPacketSize);
-
-  Serial.println("Setup done");
-  Serial.println("Opcodes");
-  Serial.print("Poll: ");Serial.println(POLL);
-  Serial.print("PollReply: ");Serial.println(POLLREPLY);
-  Serial.print("Update: ");Serial.println(UPDATEFRAME);
-  Serial.println("");
-
+  if (DEBUG_MODE) {
+    Serial.print(F("Local port: "));
+    Serial.println(udp.localPort());
+    Serial.print(F("Expected packagesize:"));
+    Serial.println(udpPacketSize);
+  
+    Serial.println(F("Setup done"));
+    Serial.println(F("Opcodes"));
+    Serial.print(F("Poll: "));Serial.println(POLL);
+    Serial.print(F("PollReply: "));Serial.println(POLLREPLY);
+    Serial.print(F("Update: "));Serial.println(UPDATEFRAME);
+    Serial.println(F(""));
+  }
   // Initial full black strip push and init.
   blankTime=micros();
-  //strip->Begin();
-  //for (uint16_t i = 0; i < pixelsPerStrip; i++) {
-  //  strip->SetPixelColor(i, RgbColor(0, 0, 0));
-  //  ledDataBuffer[i] = RgbColor(0, 0, 0);
-  //}
-  //strip->Show();
+
   blankTime=micros()-blankTime;
 
   for(int i=0 ; i<framesToMonitor ; i++)  //blank all frames metadata
@@ -268,7 +270,6 @@ void setup() {
     // build Javascript code to draw SVG wifi graph
     IPAddress local_ip=WiFi.localIP();
     String rt="<!doctype html><html><body>";
-//    rt+="Connected to:"+String(ssid)+"<br>IP address:"+String(local_ip[0]) + "." + String(local_ip[1]) + "." + String(local_ip[2]) + "." + String(local_ip[3]);
     rt+="Connected to:"+WiFi.SSID()+"<br>IP address:"+String(local_ip[0]) + "." + String(local_ip[1]) + "." + String(local_ip[2]) + "." + String(local_ip[3]);
     rt+="<br>port:"+String(udpPort)+"<br>Expected packet size:"+String(udpPacketSize);
     rt+="<br><h2>WiFi monitoring</h2><svg id='svg' width='800' height='800'></svg><script type='text/javascript'>";
@@ -410,7 +411,6 @@ void setup() {
       return;
     }
     String updateString = server.arg("plain");  //retrieve body from HTTP POST request
-    Serial.println(updateString);
     drd.stop(); //Prevents WiFi wiping during resets
     StaticJsonBuffer<2000> jsonBuffer;
     JsonObject& input = jsonBuffer.parseObject(server.arg("plain"));
@@ -423,7 +423,6 @@ void setup() {
       updateString.toCharArray(str, 64);
       String cmd = strtok(str, " ");
       if (cmd.indexOf("pixels_per_strip") == 0) {
-        Serial.println("Updating");
         blank();
         int val = String(strtok(NULL, " ")).toInt();
         
@@ -455,7 +454,6 @@ void setup() {
       } else if (cmd.indexOf("amps_limit") == 0) {
         float val = String(strtok(NULL, " ")).toFloat();
         if (!updateAmps(val)) return;
-        milliAmpsLimit = amps * 1000;
         initDisplay();
         server.send(200,"application/json", "{\"amps_limit\":\"Success\"}");
         
@@ -475,7 +473,6 @@ void setup() {
         server.send(200,"application/json", "{\"warmup_color\":\"Success\"}");
         
       } else {
-        Serial.println(cmd);
         server.send(422,"application/json", "{\"error\":\"INVALID COMMAND\"}");
       } 
       
@@ -502,14 +499,13 @@ void setup() {
       }
       
       if (input["device_name"].success()) {
-        const char* dName = input["device_name"];
-        Serial.println(dName);        
+        const char* dName = input["device_name"];       
         root["device_name"] = (updateName(String(dName)) ? "Success" : "Failed");
       }
       
-      if (input["amps_limit"] != NULL) {
+      if (input["amps_limit"].success()) {
         root["amps_limit"] = (updateAmps(input["amps_limit"]) ? "Success" : "Failed");
-        milliAmpsLimit = amps * 1000;
+        
         initD = true;
       }
       
@@ -519,9 +515,6 @@ void setup() {
       }
       
       if (input["warmup_color"] != NULL ) {
-        //byte arr[3] = input["warmup_color"];
-        //char arr[16];
-        //temp.toCharArray(arr, 16);
         byte v1 = input["warmup_color"][0];
         byte v2 = input["warmup_color"][1];
         byte v3 = input["warmup_color"][2];
@@ -541,11 +534,21 @@ void setup() {
 
 void loop() { //main program loop
   int opcode = parseUdpPoll();
-  // opcodes between 0 and 100 represent the chunkID
-  if (opcode <= CHUNKIDMAX) {
+  // opcodes between 0 and 99 represent the chunkID
+  if (opcode <= CHUNKIDMAX && opcode >= CHUNKIDMIN) {
     if(streaming) {
       playStreaming(opcode);
-    } else if (playingSprite){
+    }
+  } else if (opcode == UPDATEFRAME) {
+    udpUpdateFrame();
+  } else if (opcode == CONFIG) {
+    udpConfigDevice();
+  } else if (opcode == POLL) {
+    udpSendPollReply();
+  } else if (opcode == POLLREPLY) {
+    //POLLREPLY
+  } else if (!streaming) {
+    if (playingSprite){
       if (spriteCounter < spriteRepeat) {
         animations.UpdateAnimations();
         strip->Show();
@@ -553,21 +556,10 @@ void loop() { //main program loop
         blank();
       }
     } else {
-//      int packetSize = udp.parsePacket();
-//      if (packetSize > 0) udp.read();  //remove any udp packet from buffer while in effect mode
       if(!playEffect()) { //when last frame of last effect switch back to streaming mode
         streaming=true;
-      };
-      delay(16);
-    };
-  } else if (opcode == UPDATEFRAME) {
-    udpUpdateDevice();
-  } else if (opcode == POLL) {
-    udpSendPollReply();
-  } else if (opcode == POLLREPLY) {
-    //POLLREPLY
-  } else {
-    Serial.println("Invalid opcode");
+      }
+    }
   }
   ftpSrv.handleFTP();
   server.handleClient();
@@ -591,10 +583,27 @@ RgbColor adjustToMaxMilliAmps(RgbColor c) {
     r.G=c.G*milliAmpsLimit/ma;
     r.B=c.B*milliAmpsLimit/ma;
   }
-   //Serial.println("milliAmpsLimit:"+String(milliAmpsLimit)+" ma:"+String(ma));
-   //Serial.println("adjustToMaxMilliAmps :"+String(c.R)+" "+String(c.G)+" "+String(c.B)+" -> "+String(r.R)+" "+String(r.G)+" "+String(r.B));
+
   return r;
 }; 
+
+HsbColor adjustToMaxMilliAmps(HsbColor c) {
+  float ma = (float)mAPerPixel * c.B * pixelsPerStrip;
+  HsbColor r = c;
+  if (ma > milliAmpsLimit) {
+    r.B = c.B * milliAmpsLimit/ma;
+  }
+  return r;
+}
+
+HslColor adjustToMaxMilliAmps(HslColor c) {
+  float ma = (float)mAPerPixel * c.L * pixelsPerStrip;
+  HslColor r = c;
+  if (ma > milliAmpsLimit) {
+    r.L = c.L * milliAmpsLimit/ma;
+  }
+  return r;
+}
 
 String getCommand(String line){
   String ret=line.substring(0,line.indexOf(' '));
@@ -625,7 +634,6 @@ RgbColor getRGB(String params, int n) {
   }
   if(pos>0) { //found RGB token at pos
     colors=params.substring(pos,(params.substring(pos)+" ").indexOf(' ')+pos);//extract colors  values between RGB token and next space/LF
-    // Serial.println(params+" -> "+String(n)+":"+String(pos)+" <"+colors+">");
     r=constrain(colors.toInt(),0,255); // isolate red component
     pos=colors.indexOf(',');
     if (pos>=0) {
@@ -661,7 +669,6 @@ RgbColor getHSB(String params, int n) {
   }
   if(pos>0) { //found HSB token at pos
     colors=params.substring(pos,(params.substring(pos)+" ").indexOf(' ')+pos);//extract colors  values between HSB token and next space/LF
-    // Serial.println(params+" -> "+String(n)+":"+String(pos)+" <"+colors+">");
     h=constrain(colors.toInt(),0,360); // isolate Hue component
     pos=colors.indexOf(',');
     if (pos>=0) {
@@ -673,8 +680,6 @@ RgbColor getHSB(String params, int n) {
   }
   RgbColor r=RgbColor(255,0,0);
   HsbColor hsb=HsbColor(r);
-  //Serial.println("Color: R:"+String(r.R)+" G:"+String(r.G)+" B:"+String(r.B)+" / h:"+String(hsb.H)+" s:"+String(hsb.S)+" b:"+String(hsb.B));; 
-  //Serial.println("h:"+String(h)+" s:"+String(s)+" b:"+String(b));
 
   return HsbColor(h/360.0f,s/100.0f,b/100.0f);
 };
@@ -692,7 +697,6 @@ HslColor getHSL(String params, int n) {
   }
   if(pos>0) { //found HSL token at pos
     colors=params.substring(pos,(params.substring(pos)+" ").indexOf(' ')+pos);//extract colors  values between HSL token and next space/LF
-    // Serial.println(params+" -> "+String(n)+":"+String(pos)+" <"+colors+">");
     h=constrain(colors.toInt(),0,360); // isolate Hue component
     pos=colors.indexOf(',');
     if (pos>=0) {
@@ -764,7 +768,9 @@ int getTimes(String params) {
 }
 
 boolean playEffect() {
-  Serial.println(play);
+  if (DEBUG_MODE) {
+    Serial.println(play);
+  }
   if(frame==0) {  // frame zero means to go get a command line from the HTTP request body
     String line,params;
     int pos,RGBcolors,HSBcolors,HSLcolors;
@@ -782,7 +788,6 @@ boolean playEffect() {
       params=getParams(line);
       // Get RBG colors
       RGBcolors=getColors(params,"RGB");
-      //Serial.println("Colors:"+String(colors));
       if(RGBcolors==1) {
         rgb1=LastColor;
         rgb2=adjustToMaxMilliAmps(getRGB(params,1));
@@ -796,10 +801,10 @@ boolean playEffect() {
       HSBcolors=getColors(params,"HSB");
       if(HSBcolors==1) {
         hsb1=LastColor;
-        hsb2=getHSB(params,1);
+        hsb2=adjustToMaxMilliAmps(getHSB(params,1));
       } else {
-        hsb1=getHSB(params,1);
-        hsb2=getHSB(params,2);
+        hsb1=adjustToMaxMilliAmps(getHSB(params,1));
+        hsb2=adjustToMaxMilliAmps(getHSB(params,2));
       };
       if(HSBcolors>0) LastColor=hsb2;
 
@@ -807,10 +812,10 @@ boolean playEffect() {
       HSLcolors=getColors(params,"HSL");
       if(HSLcolors==1) {
         hsl1=LastColor;
-        hsl2=getHSL(params,1);
+        hsl2=adjustToMaxMilliAmps(getHSL(params,1));
       } else {
-        hsl1=getHSL(params,1);
-        hsl2=getHSL(params,2);
+        hsl1=adjustToMaxMilliAmps(getHSL(params,1));
+        hsl2=adjustToMaxMilliAmps(getHSL(params,2));
       };
       if(HSLcolors>0) LastColor=hsl2;     
 
@@ -820,8 +825,9 @@ boolean playEffect() {
       //frame++;        // advance to frame 1 to start animating effect
    };   
  };
- Serial.println("command:" + command + " rgb1:" + rgb1.R+","+rgb1.G+","+rgb1.B + " rgb2:" + rgb2.R+","+rgb2.G+","+rgb2.B + " duration(frames):" + frames + " repetitions:" + times);
- 
+ if (DEBUG_MODE) {
+  Serial.println("command:" + command + " rgb1:" + rgb1.R+","+rgb1.G+","+rgb1.B + " rgb2:" + rgb2.R+","+rgb2.G+","+rgb2.B + " duration(frames):" + frames + " repetitions:" + times);
+ }
  //place here pointers to all Effect functions
  if(command=="BLINK") blink(rgb1, rgb2, frames, times);
  if(command=="HUE")   hue(rgb1, rgb2, frames, times);
@@ -841,174 +847,73 @@ void playStreaming(int chunkID) {
     lastStreamingFrame=0;
   }
   //int packetSize = udp.parsePacket();
-  if (chunkID != NOPACKET) {
-    //take initial time //MDB
-    arrivedAt=micros();
-   
-    // read the packet into packetBufffer
-    //udp.read(packetBuffer, udpPacketSize);
-
-    //action = packetBuffer[0];
-   
-    //Serial.println(String(frameIndex)+":"+frameNumber+" - "+String(action)+" "+String(packetSize)+"/"+String(udpPacketSize)); 
-    
-    if (DEBUG_MODE) { // If Debug mode is on print some stuff
-      Serial.println("---Incoming---");
-      Serial.print("ChunkID: ");
-      Serial.println(chunkID);
-//      Serial.print("Action: ");
-//      Serial.println(action);
-    }
-    
-//    if (chunkID != NOPACKET)
-//    { // if chunkID is anything but NOPACKET (this means we're receiving some portion of our rgb pixel data..)
-
-    framesMD[frameIndex].frame=frameNumber;
-    framesMD[frameIndex].part=chunkID;
-    framesMD[frameIndex].arrivedAt=arrivedAt;
-    
-    // Figure out what our starting offset is.
-    //const uint16_t initialOffset = chunkSize * (action - 1);
-    const uint16_t initialOffset = chunkSize * chunkID;
-    
-    if (DEBUG_MODE) { // If Debug mode is on print some stuff
-      Serial.print("---------: ");
-      Serial.print(chunkSize);
-      Serial.print("   ");
-      //Serial.println((action - 1));
-      Serial.println("");
-      Serial.print("Init_offset: ");
-      Serial.println(initialOffset);
-      Serial.print(" ifLessThan: ");
-      Serial.println((initialOffset + chunkSize));
-    }
-
-    // loop through our recently received packet, and assign the corresponding
-    // RGB values to their respective places in the strip.
-    //if(action<=MAX_ACTION_BYTE) { //check the ation byte is within limits
-    uint16_t led=0;
-    for (uint16_t i = IDLENGTH + 1; i < (IDLENGTH + chunkSize*3);) {
-
-      r = packetBuffer[i++];
-      g = packetBuffer[i++];
-      b = packetBuffer[i++];
-
-      strip->SetPixelColor(initialOffset+led++, colorGamma.Correct(RgbColor(r, g, b))); // this line uses gamma correction
-      milliAmpsCounter += (r + g + b); // increment our milliamps counter accordingly for use later.
-    }
-    
-
-    if (DEBUG_MODE) { // If Debug mode is on print some stuff
-      Serial.println("Finished For Loop!");
-    }
-
-    // if we're debugging packet drops, modify reply buffer.
-    if (PACKETDROP_DEBUG_MODE) {
-      //ReplyBuffer[action] = 1;
-      ReplyBuffer[chunkID] = 1;
-    }
-
-//      if (packetSize != udpPacketSize)
-//      { // if our packet was not full, it means it was also a terminating update packet.
-//        action = 0;
-//      }
-      // Packetsize is no longer available in this scope
-      framesMD[frameIndex].packetSize=0;
-      framesMD[frameIndex].power=0;
-      framesMD[frameIndex].adjustedPower=0;
-      framesMD[frameIndex].processingTime=micros()-framesMD[frameIndex].arrivedAt;
-      frameIndex=(frameIndex +1) % framesToMonitor;
-      //packetSize=0; // implicit frame 0 will have packetSize == 0  MDBx
-      arrivedAt=micros();
-    }
-
-    // If we received an action byte of 0... this is telling us we received all the data we need
-    // for this frame and we should update the actual rgb vals to the strip!
-    //framesMD[frameIndex].frame=frameNumber+1;  //MDBx
-    
-    else if (chunkID == NOPACKET) {
-      framesMD[frameIndex].frame=frameNumber;
-      framesMD[frameIndex].part=chunkID;
-      framesMD[frameIndex].arrivedAt=arrivedAt;
-
-      pinMode(BUILTIN_LED, OUTPUT);
-
-      // this math gets our sum total of r/g/b vals down to milliamps (~60mA per pixel)
-      milliAmpsCounter /= 13;
-      framesMD[frameIndex].power=milliAmpsCounter;
-
-      // because the Darken function uses a value from 0-255 this next line maths it into the right range and type.
-      millisMultiplier = 255 - (byte)( constrain( ((float)milliAmpsLimit / (float)milliAmpsCounter), 0, 1 ) * 256);
-      millisMultiplier = map(millisMultiplier, 0, 255, 255, 0); // inverse the multiplier to work with new brightness control method
-      // Collect data  MDB
-      framesMD[frameIndex].adjustedPower=millisMultiplier;
-
-      if (DEBUG_MODE) { // If Debug mode is on print some stuff
-        Serial.println("Trying to update leds...");
-        Serial.print("Dimmin leds to: ");
-        Serial.println( millisMultiplier );
-      }
-
-
-      // We already applied our r/g/b values to the strip, but we haven't updated it yet.
-      // Since we needed the sum total of r/g/b values to calculate brightness, we
-      // can loop through all the values again now that we have the right numbers
-      // and scale brightness if we need to.
-      
-      if(millisMultiplier!=255)  //dim LEDs only if required
-        strip->SetBrightness(millisMultiplier); // this new brightness control method was added to lib recently, affects entire strip at once.
-      strip->Show();   // write all the pixels out
-      lastStreamingFrame=millis();
-      milliAmpsCounter = 0; // reset the milliAmpsCounter for the next frame.
-
-      //Serial.println("");  ////////////////////
-
-      if (DEBUG_MODE) { // If Debug mode is on print some stuff
-        Serial.println("Finished updating Leds!");
-      }
-
-      // Send reply to sender, basically a ping that says hey we just updated leds.
-      //Serial.print("IP: ");
-      //Serial.println(udp.remoteIP());
-      //Serial.print("Port: ");
-      //Serial.println(udp.remotePort());
-
-      // if we're debugging packet drops, modify reply buffer.
-      if (PACKETDROP_DEBUG_MODE) {
-        // set the last byte of the reply buffer to 2, indiciating that the frame was sent to leds.
-        ReplyBuffer[sizeof(ReplyBuffer) - 1] = 2;
-        ReplyBuffer[0] = counterHolder;
-        counterHolder += 1;
-        // write out the response packet back to sender!
-        udp.beginPacket(udp.remoteIP(), UDP_PORT_OUT);
-        // clear the response buffer string.
-        for (byte i = 0; i < sizeof(ReplyBuffer); i++) {
-          udp.write(ReplyBuffer[i]);
-          ReplyBuffer[i] = 0;
-        }
-        udp.endPacket();
-      }
-
-      //measure total frame processing time
-      framesMD[frameIndex].processingTime=micros()-framesMD[frameIndex].arrivedAt;
-      frameIndex=(frameIndex+1) % framesToMonitor;
-
-    
-      //framesMD[frameIndex].processingTime=micros()-framesMD[frameIndex].arrivedAt;
-      if(frameIndex==oldestFrameIndex) oldestFrameIndex=(oldestFrameIndex+1) % framesToMonitor;
-      frameNumber=(frameNumber+1) % frameLimit;
-
-      pinMode(BUILTIN_LED, INPUT);
-    }
-
-    if (DEBUG_MODE) { // If Debug mode is on print some stuff
-      Serial.println("--end of packet and stuff--");
-      Serial.println("");
-    }
-    
+  //take initial time //MDB
+  arrivedAt=micros();
   
-  //delay(0);
+  if (DEBUG_MODE) { // If Debug mode is on print some stuff
+    Serial.println(F("---Incoming---"));
+    Serial.print(F("ChunkID: "));
+    Serial.println(chunkID);
 
+  }
+
+  framesMD[frameIndex].frame=frameNumber;
+  framesMD[frameIndex].part=chunkID;
+  framesMD[frameIndex].arrivedAt=arrivedAt;
+  
+  // Figure out what our starting offset is.
+  //const uint16_t initialOffset = chunkSize * (action - 1);
+  const uint16_t initialOffset = chunkSize * chunkID;
+  
+  if (DEBUG_MODE) { // If Debug mode is on print some stuff
+    Serial.print(F("---------: "));
+    Serial.print(chunkSize);
+    Serial.print(F("   "));
+    //Serial.println((action - 1));
+    Serial.println(F(""));
+    Serial.print(F("Init_offset: "));
+    Serial.println(initialOffset);
+    Serial.print(F(" ifLessThan: "));
+    Serial.println((initialOffset + chunkSize));
+  }
+
+  // loop through our recently received packet, and assign the corresponding
+  // RGB values to their respective places in the strip.
+  //if(action<=MAX_ACTION_BYTE) { //check the ation byte is within limits
+  uint16_t led=0;
+  for (uint16_t i = IDLENGTH + 1; i < (IDLENGTH + chunkSize*3);) {
+
+    r = packetBuffer[i++];
+    g = packetBuffer[i++];
+    b = packetBuffer[i++];
+
+    strip->SetPixelColor(initialOffset+led++, colorGamma.Correct(RgbColor(r, g, b))); // this line uses gamma correction
+    milliAmpsCounter += (r + g + b); // increment our milliamps counter accordingly for use later.
+  }
+  
+
+  if (DEBUG_MODE) { // If Debug mode is on print some stuff
+    Serial.println(F("Finished For Loop!"));
+  }
+
+  // if we're debugging packet drops, modify reply buffer.
+  if (PACKETDROP_DEBUG_MODE) {
+    //ReplyBuffer[action] = 1;
+    ReplyBuffer[chunkID] = 1;
+  }
+
+  framesMD[frameIndex].packetSize=0;
+  framesMD[frameIndex].power=0;
+  framesMD[frameIndex].adjustedPower=0;
+  framesMD[frameIndex].processingTime=micros()-framesMD[frameIndex].arrivedAt;
+  frameIndex=(frameIndex +1) % framesToMonitor;
+  //packetSize=0; // implicit frame 0 will have packetSize == 0  MDBx
+  arrivedAt=micros();
+
+  if (DEBUG_MODE) { // If Debug mode is on print some stuff
+    Serial.println(F("--end of packet and stuff--"));
+    Serial.println(F(""));
+  }
 }
 
 String formatN(long n, int p) {
@@ -1123,7 +1028,6 @@ void huehsb(HsbColor hsb1, HsbColor hsb2, int frames, int times) {
     float progress=(frame % frames)/(frames-1.0);  
     //transition from rgb1 to rgb2
     hsb=HsbColor(hsb1.H+(hsb2.H-hsb1.H)*progress,hsb1.S+(hsb2.S-hsb1.S)*progress,hsb1.B+(hsb2.B-hsb1.B)*progress);
-    //Serial.print(progress);Serial.println(sHSB(hsb1)+" - "+sHSB(hsb2)+":"+sHSB(hsb));
     paintFrame(RgbColor(hsb));
     frame++;
   };
@@ -1140,7 +1044,6 @@ void huehsl(HslColor hsl1, HslColor hsl2, int frames, int times) {
     float progress=(frame % frames)/(frames-1.0);  
     //transition from rgb1 to rgb2
     hsl=HslColor(hsl1.H+(hsl2.H-hsl1.H)*progress,hsl1.S+(hsl2.S-hsl1.S)*progress,hsl1.L+(hsl2.L-hsl1.L)*progress);
-    //Serial.print(progress);Serial.println(sHSL(hsl1)+" - "+sHSL(hsl2)+":"+sHSL(hsl));
     paintFrame(RgbColor(hsl));
     frame++;
   };
@@ -1152,6 +1055,8 @@ bool updatePixels(int val) {
     return false;
   } else {
     ed.updatePixelsPerStrip(val);
+    // Force sprite to reload file
+    spritelastfile = "";
     return true;
   }
 }
@@ -1163,6 +1068,8 @@ bool updateChunk(int val) {
 
 bool updateMA(int val) {
   ed.updatemaPerPixel(val);
+  // Force sprite to reload file
+  spritelastfile = "";
   return true;
 }
 
@@ -1173,6 +1080,10 @@ bool updateName(String val) {
 
 bool updateAmps(float val) {
   ed.updateAmps(val);
+  // Force sprite to reload file
+  spritelastfile = "";
+  // Update milliamps value
+  milliAmpsLimit = amps * 1000;
   return true;
 }
 
@@ -1203,8 +1114,9 @@ void restart() {
 }
 
 void startNeoPixelBus() {
-  Serial.println(F("Starting NeoPixelBus"));
-
+  if (DEBUG_MODE) {
+    Serial.println(F("Starting NeoPixelBus"));
+  }
   if (strip) {
     delete strip;
   }
@@ -1227,7 +1139,9 @@ void setUdpPacketSize() {
 }
 
 void startUDP() {
-  Serial.println(F("Starting UDP"));
+  if (DEBUG_MODE) {
+    Serial.println(F("Starting UDP"));
+  }
   udp.stop();
   delay(100);
   udp.begin(udpPort);
@@ -1289,26 +1203,26 @@ bool loadSpriteFile(File f, uint8_t cStartIn[], uint8_t cEndIn[]) {
 
   // Header2 holds num of frames in sprite file
   spriteFrames = tbuf[2] * 256 + tbuf[3];
- 
-  free(imageBuffer);
-  
-  String imgParams = "Frames: " + String(spriteFrames);
-  imgParams += ", Start: (" + String(cStartIn[0]) + ", " + String(cStartIn[1]) + ", " + String(cStartIn[2]) + ")";
-  imgParams += ", End: (" + String(cEndIn[0]) + ", " + String(cEndIn[1]) + ", " + String(cEndIn[2]) + ")";
-  imgParams += ", SpritePixels: " + String(spritePixels) + ", BufferSize: " + String(bytesPerPixel * spritePixels * spriteFrames);
-  Serial.println(imgParams);
-  
-  uint8_t rgb[bytesPerPixel];
-  imageBuffer = (uint8_t *)malloc(bytesPerPixel * spritePixels * spriteFrames);
 
-  // Size of 1 frame
-  uint32_t tempBufferSize = spritePixels * bytesPerPixel;
-  uint8_t tempImageBuffer[tempBufferSize];
-  
-  // Initialize all values to 0
-  for (uint16_t i = 0; i < tempBufferSize; i++) {
-    tempImageBuffer[i] = 0;
+  // Reset milliamps counter
+  float ma = 0;
+
+  if (DEBUG_MODE) {
+    String imgParams = "Frames: " + String(spriteFrames);
+    imgParams += ", Start: (" + String(cStartIn[0]) + ", " + String(cStartIn[1]) + ", " + String(cStartIn[2]) + ")";
+    imgParams += ", End: (" + String(cEndIn[0]) + ", " + String(cEndIn[1]) + ", " + String(cEndIn[2]) + ")";
+    imgParams += ", SpritePixels: " + String(spritePixels) + ", BufferSize: " + String(bytesPerPixel * spritePixels * spriteFrames);
+    Serial.println(imgParams);
   }
+  uint8_t rgb[bytesPerPixel];
+
+  if (bytesPerPixel * spritePixels * spriteFrames > MAX_SPRITESIZE) {
+    Serial.println(F("SpriteFile exceeds maximum allowed"));
+    return false;
+  }
+  
+  free(imageBuffer);
+  imageBuffer = (uint8_t *)malloc(bytesPerPixel * spritePixels * spriteFrames);
   
   uint16_t bufferCount = 0;
   float progress = 0;
@@ -1316,70 +1230,81 @@ bool loadSpriteFile(File f, uint8_t cStartIn[], uint8_t cEndIn[]) {
   RgbColor cStart = RgbColor(cStartIn[0], cStartIn[1], cStartIn[2]);
   RgbColor cEnd = RgbColor(cEndIn[0], cEndIn[1], cEndIn[2]);
 
-  bool shouldBlend = true;
-  if (!(cStart.R || cStart.G || cStart.B || cEnd.R || cEnd.G || cEnd.B)) {
-    shouldBlend = false;
-  }
+  // Prevents blending if no values are passed
+  bool shouldBlend = (cStart.R || cStart.G || cStart.B || cEnd.R || cEnd.G || cEnd.B);
+
   for (uint16_t frameCounter = 0; frameCounter < spriteFrames; frameCounter++) {
     // Calc progress along frames
     progress = double(frameCounter + 1) / double(spriteFrames);
 
-    uint32_t tempBufferCount = 0;
-    
     for (uint16_t i = 0; i < spritePixels; i++) {
       // If i is greater than the number of pixels given in the file then repeat previous information
-      if (i < spritePixels) {
-        f.read(rgb, bytesPerPixel);
+      
+      f.read(rgb, bytesPerPixel);
+      if (DEBUG_MODE) {
         Serial.println("Pre_rgb: " + String(rgb[0]) + ", " + String(rgb[1]) + ", " + String(rgb[2]));
-        //If any of them have a color value then blend the transition colors
-        if ( 
-              shouldBlend &&                                                           // The user wants frames to blend
-              (rgb[0] || rgb[1] || rgb[2]) &&                                          // The sprite file pixel has value in it
-              (frameCounter != 0 || (cStart.R || cStart.G || cStart.B)) &&             // On first frame and initial blend has value
-              (frameCounter + 1 != spriteFrames || (cEnd.R || cEnd.G || cEnd.B))             // On last frame and last blend has value
-           ) { 
-          RgbColor spriteColor = RgbColor(rgb[0], rgb[1], rgb[2]);
-          RgbColor result = RgbColor::BilinearBlend(
-            cStart,                 //Upper Left
-            spriteColor,            //Upper Right
-            spriteColor,            //Lower Left
-            cEnd,                   //Lower Right
-            progress,               //X axis
-            progress                //Y axis
-          );
-          
-          tempImageBuffer[tempBufferCount++] = result.G;
-          tempImageBuffer[tempBufferCount++] = result.R;
-          tempImageBuffer[tempBufferCount++] = result.B;
-          
-          Serial.println("post_rgb: " + String(result.R) + ", " + String(result.G) + ", " + String(result.B));
-          
-          //TODO Milliamp check
-        } else {  // Don't blend
-          tempImageBuffer[tempBufferCount++] = rgb[1];
-          tempImageBuffer[tempBufferCount++] = rgb[0];
-          tempImageBuffer[tempBufferCount++] = rgb[2];
-        }
+      }
+      //If any of them have a color value then blend the transition colors
+      if ( 
+            shouldBlend &&                                                           // The user wants frames to blend
+            (rgb[0] || rgb[1] || rgb[2]) &&                                          // The sprite file pixel has value in it
+            (frameCounter != 0 || (cStart.R || cStart.G || cStart.B)) &&             // On first frame and initial blend has value
+            (frameCounter + 1 != spriteFrames || (cEnd.R || cEnd.G || cEnd.B))             // On last frame and last blend has value
+         ) { 
+        RgbColor spriteColor = RgbColor(rgb[0], rgb[1], rgb[2]);
+        RgbColor result = RgbColor::BilinearBlend(
+          cStart,                 //Upper Left
+          spriteColor,            //Upper Right
+          spriteColor,            //Lower Left
+          cEnd,                   //Lower Right
+          progress,               //X axis
+          progress                //Y axis
+        );
+        
+        rgb[1] = result.G;
+        rgb[0] = result.R;
+        rgb[2] = result.B;
 
-          //Fill previously computed values into imageBuffer
-          Serial.println("temp->buf (GRB): " + String(tempImageBuffer[tempBufferCount - 3]) + ", " + String(tempImageBuffer[tempBufferCount - 2]) + ", " + String(tempImageBuffer[tempBufferCount - 1]));
-          
-          imageBuffer[bufferCount++] = tempImageBuffer[tempBufferCount - 3];
-          imageBuffer[bufferCount++] = tempImageBuffer[tempBufferCount - 2];
-          imageBuffer[bufferCount++] = tempImageBuffer[tempBufferCount - 1];
-      } else { //Sprite repeat shouldn't occur
-        Serial.println("PixelRepeating GRB: (" + String(tempImageBuffer[tempBufferCount % tempBufferSize]) +
-        ", " + String(tempImageBuffer[tempBufferCount+1 % tempBufferSize]) +
-        ", " + String(tempImageBuffer[tempBufferCount+2 % tempBufferSize]) + ")" +
-        "\nTempBufferCount: " + String(tempBufferCount) +
-        "\nTempBufferSize: " + String(tempBufferSize));
-        for (uint8_t j = 0; j < bytesPerPixel; j++) {        
-          imageBuffer[bufferCount++] = tempImageBuffer[tempBufferCount % tempBufferSize];
-          tempBufferCount++;
+        if (DEBUG_MODE) {
+          Serial.println("post_rgb: " + String(result.R) + ", " + String(result.G) + ", " + String(result.B));        
         }
-      }      
+      }
+
+      ma += (mAPerPixel/3) * (rgb[0] + rgb[1] + rgb[2]) / 255.0;
+      
+      imageBuffer[bufferCount++] = rgb[1];
+      imageBuffer[bufferCount++] = rgb[0];
+      imageBuffer[bufferCount++] = rgb[2];
+      
     }
+
+    if (DEBUG_MODE) {
+        Serial.print(F("Raw_mA"));Serial.println(ma);
+    }
+    ma *= ceil((float)pixelsPerStrip / (float)spritePixels);
+
+    // If pixels output a greater ma then adjust each pixel in the frame
+    if (ma > milliAmpsLimit) {
+      float spriteMillisMultiplier = milliAmpsLimit / ma;
+      // Go back to start of frame
+      bufferCount = bufferCount - (spritePixels * bytesPerPixel);
+      for (uint16_t i = 0; i < spritePixels; i++) {
+        for (byte j = 0; j < bytesPerPixel; j++) {
+          imageBuffer[bufferCount] = floor(imageBuffer[bufferCount] * spriteMillisMultiplier);
+          bufferCount++;
+        }
+      }
+      if (DEBUG_MODE) {
+        Serial.print(F("Calc'dMillis"));Serial.println(ma);
+        Serial.print(F("MilliAmpsLimit"));Serial.println(milliAmpsLimit);
+        Serial.print(F("SpriteMillisMultiplier"));Serial.println(spriteMillisMultiplier);
+      }
+    }
+
+    // Reset mA for next frame
+    ma = 0.0;
   }
+    
   delete spriteSheet;
   spriteSheet = new NeoVerticalSpriteSheet<NeoBufferMethod<NeoGrbFeature>>(spritePixels, spriteFrames, 1, imageBuffer);
   return true;
@@ -1389,8 +1314,10 @@ bool loadSpriteFile(File f, uint8_t cStartIn[], uint8_t cEndIn[]) {
 bool spriteParse() {
   char buf[256];
   char *tok;
-  Serial.print("Sprite to parse: ");
-  Serial.println(play);
+  if (DEBUG_MODE) {
+    Serial.print("Sprite to parse: ");
+    Serial.println(play);
+  }
   //Make sure all arguments are present
   int rgbCount = 0;
   int sCount = 0;
@@ -1400,7 +1327,7 @@ bool spriteParse() {
   int commaCount = 0;
   play.toCharArray(buf, 256);
 
-  tok = strtok(buf, " ");  //Assumes SPRITE
+  tok = strtok(buf, " ");  //Assumes SPRITE and discards it
 
   while (tok = strtok(NULL, " ")) {
     char c = tok[0];
@@ -1491,7 +1418,7 @@ int getDigits(int index, char* arr) {
 bool handleSprite() { //SPRITE rgb255,0,0 rgb0,0,255 t10 f30 s1 x4 y3 a60
                       //SPRITE rgb255,0,0 rgb0,0,255 t10 f30 s'filename.bmp' x8 y32 a60
   if (!spriteParse()) {
-    Serial.println("Sprite failed to parse");
+    Serial.println(F("Sprite failed to parse"));
     return false;
   }
   char buf[256];
@@ -1511,12 +1438,12 @@ bool handleSprite() { //SPRITE rgb255,0,0 rgb0,0,255 t10 f30 s1 x4 y3 a60
   int i = 0;
   int tI = 0;
   int cI = 0;
-  Serial.print("Sprite to tokenize");Serial.println(play);
+  
   play.toCharArray(buf, 256);
   tok = strtok(buf, " ");     //Discards command SPRITE
-  Serial.print("First token: ");Serial.println(tok);
+ 
   while (tok = strtok(NULL, " ")) {
-    Serial.print("Next token: ");Serial.println(tok);
+    
     char c = tok[0];
     switch (c) {
       case 'r':
@@ -1573,13 +1500,13 @@ bool handleSprite() { //SPRITE rgb255,0,0 rgb0,0,255 t10 f30 s1 x4 y3 a60
         return false;
     }
   }
-  Serial.print("Last token: ");Serial.println(tok);
 
   if (fileNum > 0) {
     filename += "sp" + String(fileNum);
   }
-  Serial.print("Filename: ");Serial.println(filename);
-
+  if (DEBUG_MODE) {
+    Serial.print(F("Filename: "));Serial.println(filename);
+  }
   // If same file loaded before just replay sprite unless color transition changed
   if (filename != spritelastfile || !compareArrays(colorStart, lastColorStart, bytesPerPixel) || !compareArrays(colorEnd, lastColorEnd, bytesPerPixel)) {
     File f = SPIFFS.open(filename, "r");
@@ -1588,9 +1515,10 @@ bool handleSprite() { //SPRITE rgb255,0,0 rgb0,0,255 t10 f30 s1 x4 y3 a60
       return false;
     }
 
-    Serial.print("First RGB: ");Serial.println(String(colorStart[0]) + ":" + String(colorStart[1]) + ":" + String(colorStart[2]));
-    Serial.print("Second RGB: ");Serial.println(String(colorEnd[0]) + ":" + String(colorEnd[1]) + ":" + String(colorEnd[2]));
-  
+    if (DEBUG_MODE) {
+      Serial.print(F("First RGB: "));Serial.println(String(colorStart[0]) + ":" + String(colorStart[1]) + ":" + String(colorStart[2]));
+      Serial.print(F("Second RGB: "));Serial.println(String(colorEnd[0]) + ":" + String(colorEnd[1]) + ":" + String(colorEnd[2]));
+    }
     if (!loadSpriteFile(f, colorStart, colorEnd)) {
       Serial.println(F("Failed to convert bitmap into memory"));
       f.close();
@@ -1604,14 +1532,12 @@ bool handleSprite() { //SPRITE rgb255,0,0 rgb0,0,255 t10 f30 s1 x4 y3 a60
 
     f.close();
   }
-  Serial.println(F("Blanking"));
   blankFrame();
   playingSprite = true;
   indexSprite = 0;
   spriteCounter = 0;
   spriteAnimationTime = 16.66667 * double(timePerAnimation) / double(spriteFrames);   // ms per 1/60 sec * (seconds per animation) / (Frames per animation)
   spriteRepeat = timeRepeats;
-  Serial.println(F("Starting animation"));
   animations.StartAnimation(0, spriteAnimationTime, LoopAnimUpdate);
   return true;
 }
@@ -1732,25 +1658,101 @@ int parseUdpPoll() {
   }
 
   udp.read(packetBuffer, udpPacketSize);
-  for (int j = 0; j < udpPacketSize; j++) {
-    Serial.print(packetBuffer[j]);Serial.print(":");
-    Serial.print((char)packetBuffer[j]);Serial.print(" ");
-    
+  if (DEBUG_MODE) {
+    for (int j = 0; j < udpPacketSize; j++) {
+      Serial.print(packetBuffer[j]);Serial.print(F(":"));
+      Serial.print((char)packetBuffer[j]);Serial.print(F(" "));
+      
+    }
+    Serial.println(F("EndPacket"));
   }
-  Serial.println("EndPacket");
   int i = 0;
+  
   for (; i < IDLENGTH; i++) {
-    Serial.print(UDPID[i]);Serial.print(" ");
     if (packetBuffer[i] != UDPID[i]) {
-      Serial.println("Mismatch");
+      if (DEBUG_MODE) {
+        Serial.println(F("Mismatch"));
+      }
       return NOPACKET;
     }
-  }  
-  Serial.println("Matched");
+  } 
+  if (DEBUG_MODE) {
+    Serial.println(F("Matched"));
+  }
   return packetBuffer[i];
 }
 
-void udpUpdateDevice() {
+void udpUpdateFrame() {
+//  framesMD[frameIndex].frame=frameNumber;
+//  framesMD[frameIndex].part=chunkID;
+//  framesMD[frameIndex].arrivedAt=arrivedAt;
+  if (DEBUG_MODE) {
+    Serial.println("Updating Frame");
+  }
+  pinMode(BUILTIN_LED, OUTPUT);
+
+  // this math gets our sum total of r/g/b vals down to milliamps (~60mA per pixel)
+  milliAmpsCounter /= 13;
+  //framesMD[frameIndex].power=milliAmpsCounter;
+
+  // because the Darken function uses a value from 0-255 this next line maths it into the right range and type.
+  millisMultiplier = 255 - (byte)( constrain( ((float)milliAmpsLimit / (float)milliAmpsCounter), 0, 1 ) * 256);
+  millisMultiplier = map(millisMultiplier, 0, 255, 255, 0); // inverse the multiplier to work with new brightness control method
+  // Collect data  MDB
+  //framesMD[frameIndex].adjustedPower=millisMultiplier;
+
+  if (DEBUG_MODE) { // If Debug mode is on print some stuff
+    Serial.println(F("Trying to update leds..."));
+    Serial.print(F("Dimming leds to: "));
+    Serial.println( millisMultiplier );
+  }
+
+
+  // We already applied our r/g/b values to the strip, but we haven't updated it yet.
+  // Since we needed the sum total of r/g/b values to calculate brightness, we
+  // can loop through all the values again now that we have the right numbers
+  // and scale brightness if we need to.
+  
+  if(millisMultiplier!=255) { //dim LEDs only if required
+    strip->SetBrightness(millisMultiplier); // this new brightness control method was added to lib recently, affects entire strip at once.
+  }
+  strip->Show();   // write all the pixels out
+  lastStreamingFrame=millis();
+  milliAmpsCounter = 0; // reset the milliAmpsCounter for the next frame.
+
+  if (DEBUG_MODE) { // If Debug mode is on print some stuff
+    Serial.println(F("Finished updating Leds!"));
+  }
+
+  // if we're debugging packet drops, modify reply buffer.
+  if (PACKETDROP_DEBUG_MODE) {
+    // set the last byte of the reply buffer to 2, indiciating that the frame was sent to leds.
+    ReplyBuffer[sizeof(ReplyBuffer) - 1] = 2;
+    ReplyBuffer[0] = counterHolder;
+    counterHolder += 1;
+    // write out the response packet back to sender!
+    udp.beginPacket(udp.remoteIP(), UDP_PORT_OUT);
+    // clear the response buffer string.
+    for (byte i = 0; i < sizeof(ReplyBuffer); i++) {
+      udp.write(ReplyBuffer[i]);
+      ReplyBuffer[i] = 0;
+    }
+    udp.endPacket();
+  }
+
+  //measure total frame processing time
+  //framesMD[frameIndex].processingTime=micros()-framesMD[frameIndex].arrivedAt;
+  //frameIndex=(frameIndex+1) % framesToMonitor;
+
+
+  //framesMD[frameIndex].processingTime=micros()-framesMD[frameIndex].arrivedAt;
+  //if(frameIndex==oldestFrameIndex) oldestFrameIndex=(oldestFrameIndex+1) % framesToMonitor;
+  //frameNumber=(frameNumber+1) % frameLimit;
+
+  pinMode(BUILTIN_LED, INPUT);
+}
+
+void udpConfigDevice() {
   // Set packetbuffer index past the ID and OpCode bytes
   int i = IDLENGTH + 1;
   // Get the device name and save it to a buffer
@@ -1819,7 +1821,7 @@ void udpSendPollReply() {
 
   //Copy amp limit value
   FLOAT_ARRAY tempf;
-  tempf.num = milliAmpsLimit;
+  tempf.num = amps;
   for (int j = 0; j < 4; j++) {
     ReplyBuffer[i++] = tempf.bytes[j];
   }
@@ -1833,13 +1835,15 @@ void udpSendPollReply() {
   ReplyBuffer[i++] = InitColor[1];
   ReplyBuffer[i++] = InitColor[2];
   ReplyBuffer[i] = '\0';
-  Serial.print("Sending message to ");Serial.println(udp.remoteIP());
-  Serial.println("Contents: ");
-  for (i = 0; i < sizeof(ReplyBuffer); i++) {
-    Serial.print(ReplyBuffer[i]);Serial.print(":");
-    Serial.print((char)ReplyBuffer[i]);Serial.print(" ");
+  if (DEBUG_MODE) {
+    Serial.print(F("Sending message to "));Serial.println(udp.remoteIP());
+    Serial.println(F("Contents: "));
+    for (i = 0; i < sizeof(ReplyBuffer); i++) {
+      Serial.print(ReplyBuffer[i]);Serial.print(F(":"));
+      Serial.print((char)ReplyBuffer[i]);Serial.print(F(" "));
+    }
+    Serial.println(F("EndReplyBuffer"));
   }
-  Serial.println("EndReplyBuffer");
   udp.beginPacket(udp.remoteIP(), UDP_PORT_OUT);
   // clear the response buffer string.
   for (i = 0; i < sizeof(ReplyBuffer); i++) {
