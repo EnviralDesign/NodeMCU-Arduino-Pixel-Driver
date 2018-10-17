@@ -81,7 +81,7 @@ File fsUploadFile;
 
 // If this is set to 1, a lot of debug data will print to the console.
 // Will cause horrible stuttering meant for single frame by frame tests and such.
-#define DEBUG_MODE 0 //MDB
+#define DEBUG_MODE 1 //MDB
 #define PACKETDROP_DEBUG_MODE 0
 
 //#define pixelPin D4  // make sure to set this to the correct pin, ignored for UartDriven branch
@@ -218,11 +218,8 @@ void setup() {
   //Animate from dark to initial color in 3 seconds on module power up
   initDisplay();
 
-  //while (WiFi.status() != WL_CONNECTED) {
-  //  delay(500);
-  //  Serial.print(".");
-  //}
-  //Serial.println("");
+  // Set milliamps value
+  milliAmpsLimit = amps * 1000;
 
   wifiManager.autoConnect("Enviral");
 
@@ -1487,7 +1484,7 @@ bool handleSprite() { //SPRITE rgb255,0,0 rgb0,0,255 t10 f30 s1 x4 y3 a60
       case 'r':
         char temp[12];
         i = 0;
-        while (tok[3+i] != '\0' && i < 11) {
+        while (tok[3+i] != '\0') {// && i < 11) {
           temp[i] = tok[3+i];
           i++;
         }
@@ -1513,7 +1510,7 @@ bool handleSprite() { //SPRITE rgb255,0,0 rgb0,0,255 t10 f30 s1 x4 y3 a60
             tI++;
           }
           i++;
-        } while (i < 11);
+        } while (i < 12);
         firstColor = false;
         
         break;
