@@ -81,7 +81,7 @@ File fsUploadFile;
 
 // If this is set to 1, a lot of debug data will print to the console.
 // Will cause horrible stuttering meant for single frame by frame tests and such.
-#define DEBUG_MODE 1 //MDB
+#define DEBUG_MODE 0 //MDB
 #define PACKETDROP_DEBUG_MODE 0
 
 //#define pixelPin D4  // make sure to set this to the correct pin, ignored for UartDriven branch
