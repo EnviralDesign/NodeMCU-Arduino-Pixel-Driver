@@ -81,7 +81,7 @@ File fsUploadFile;
 
 // If this is set to 1, a lot of debug data will print to the console.
 // Will cause horrible stuttering meant for single frame by frame tests and such.
-#define DEBUG_MODE 0 //MDB
+#define DEBUG_MODE 1 //MDB
 #define PACKETDROP_DEBUG_MODE 0
 
 //#define pixelPin D4  // make sure to set this to the correct pin, ignored for UartDriven branch
@@ -1270,7 +1270,7 @@ bool loadSpriteFile(File f, uint8_t cStartIn[], uint8_t cEndIn[]) {
 
   for (uint16_t frameCounter = 0; frameCounter < spriteFrames; frameCounter++) {
     // Calc progress along frames
-    progress = double(frameCounter + 1) / double(spriteFrames);
+    progress = double(frameCounter) / double(spriteFrames-1);
 
     for (uint16_t i = 0; i < spritePixels; i++) {
       // If i is greater than the number of pixels given in the file then repeat previous information
@@ -1301,7 +1301,7 @@ bool loadSpriteFile(File f, uint8_t cStartIn[], uint8_t cEndIn[]) {
         rgb[2] = result.B;
 
         if (DEBUG_MODE) {
-          Serial.println("post_rgb: " + String(result.R) + ", " + String(result.G) + ", " + String(result.B));        
+          Serial.println("post_rgb: " + String(rgb[0]) + ", " + String(rgb[1]) + ", " + String(rgb[2]));      
         }
       }
 
@@ -1961,6 +1961,10 @@ void handleFileUpload() {
     if (!filename.startsWith("/")) {
       filename = "/" + filename;
     }
+    if (filename.substring(1) == spritelastfile) {
+      // Force sprite reload
+      spritelastfile = "";
+    }
     fsUploadFile = SPIFFS.open(filename, "w");
     filename = String();
   } else if (upload.status == UPLOAD_FILE_WRITE) {
@@ -2032,6 +2036,8 @@ void handleFileList() {
     output += (isDir) ? "dir" : "file";
     output += "\",\"name\":\"";
     output += String(entry.name()).substring(1);
+    output += "\",\"size\":";
+    output += String(entry.size());
     output += "\"}";
     entry.close();
   }
