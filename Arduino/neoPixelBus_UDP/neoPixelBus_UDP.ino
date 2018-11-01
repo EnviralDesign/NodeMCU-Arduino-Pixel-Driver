@@ -2038,7 +2038,7 @@ void handleFileList() {
     output += String(entry.name()).substring(1);
     output += "\",\"size\":";
     output += String(entry.size());
-    output += "\"}";
+    output += "}";
     entry.close();
   }
 
