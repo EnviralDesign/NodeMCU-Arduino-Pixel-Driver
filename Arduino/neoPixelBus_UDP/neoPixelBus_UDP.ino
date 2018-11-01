@@ -1961,7 +1961,7 @@ void handleFileUpload() {
     if (!filename.startsWith("/")) {
       filename = "/" + filename;
     }
-    if (filename.substring(1) == spritelastfile) {
+    if (spritelastfile.equals(filename)) {
       // Force sprite reload
       spritelastfile = "";
     }
