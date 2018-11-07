@@ -596,6 +596,12 @@ void loop() { //main program loop
         streaming=true;
       }
     }
+  // Streaming but nothing received check timeout
+  } else {
+    if(lastStreamingFrame!=0 && millis()-lastStreamingFrame>STREAMING_TIMEOUT*1000) {
+      blankFrame();
+      lastStreamingFrame=0;
+    }
   }
   server.handleClient();
 }
@@ -876,12 +882,6 @@ boolean playEffect() {
 }
 
 void playStreaming(int chunkID) {
-  // if there's data available, read a packet
-  if(lastStreamingFrame!=0 && millis()-lastStreamingFrame>STREAMING_TIMEOUT*1000) {
-    blankFrame();
-    lastStreamingFrame=0;
-  }
-  //int packetSize = udp.parsePacket();
   //take initial time //MDB
   arrivedAt=micros();
   
