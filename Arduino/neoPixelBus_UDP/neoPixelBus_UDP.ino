@@ -81,7 +81,7 @@ File fsUploadFile;
 
 // If this is set to 1, a lot of debug data will print to the console.
 // Will cause horrible stuttering meant for single frame by frame tests and such.
-#define DEBUG_MODE 1 //MDB
+#define DEBUG_MODE 0 //MDB
 #define PACKETDROP_DEBUG_MODE 0
 
 //#define pixelPin D4  // make sure to set this to the correct pin, ignored for UartDriven branch
@@ -571,11 +571,9 @@ void setup() {
 void loop() { //main program loop
   int opcode = parseUdpPoll();
   // opcodes between 0 and 99 represent the chunkID
-  if (opcode <= CHUNKIDMAX && opcode >= CHUNKIDMIN) {
-    if(streaming) {
-      playStreaming(opcode);
-    }
-  } else if (opcode == UPDATEFRAME) {
+  if (opcode <= CHUNKIDMAX && opcode >= CHUNKIDMIN && streaming && !playingSprite) {
+    playStreaming(opcode);
+  } else if (opcode == UPDATEFRAME && streaming && !playingSprite) {
     udpUpdateFrame();
   } else if (opcode == CONFIG) {
     udpConfigDevice();
@@ -583,25 +581,21 @@ void loop() { //main program loop
     udpSendPollReply();
   } else if (opcode == POLLREPLY) {
     //POLLREPLY
-  } else if (!streaming) {
-    if (playingSprite){
-      if (spriteCounter < spriteRepeat) {
-        animations.UpdateAnimations();
-        strip->Show();
-      } else {
-        blank();
-      }
+  } else if (playingSprite) {
+    if (spriteCounter < spriteRepeat) {
+      animations.UpdateAnimations();
+      strip->Show();
     } else {
-      if(!playEffect()) { //when last frame of last effect switch back to streaming mode
-        streaming=true;
-      }
+      blank();
     }
   // Streaming but nothing received check timeout
-  } else {
+  } else if (streaming) {
     if(lastStreamingFrame!=0 && millis()-lastStreamingFrame>STREAMING_TIMEOUT*1000) {
       blankFrame();
       lastStreamingFrame=0;
     }
+  } else if (!playEffect()) { //when last frame of last effect switch back to streaming mode
+    streaming=true;
   }
   server.handleClient();
 }
