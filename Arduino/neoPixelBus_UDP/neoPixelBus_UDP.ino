@@ -402,7 +402,7 @@ void setup() {
     server.send(200,"text/plain", "OK");
     });
 
-  server.on("/mcu_config", HTTP_POST, []() {
+  server.on("/mcu_json", HTTP_POST, []() {
     if (server.hasArg("plain") == false) {
       server.send(422, "application/json", "{\"error\":\"HTTP BODY MISSING\"}");
       return;
@@ -1080,7 +1080,7 @@ void huehsl(HslColor hsl1, HslColor hsl2, int frames, int times) {
 }
 
 bool updatePixels(int val) {
-  if (val > 1500) {
+  if (val < 0 || val > 1500) {
     return false;
   } else {
     ed.updatePixelsPerStrip(val);
