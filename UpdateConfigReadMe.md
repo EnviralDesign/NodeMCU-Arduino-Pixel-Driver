@@ -98,6 +98,8 @@ The bytes in the file must follow the following format.
 |2 bytes        |2 bytes        |1 byte|1 byte|1 byte| ... |
 |[1, 200] = 456 |[0,5] = 5      |255   |2     |0     | ... |
 
+- The sprite file is converted into a sprite object stored in memory. Therefore, it has a size limitation of NumOfFrames * PixelsPerStrip(From the user variable, not the sprite file) * 3(For RGB) < 30K.
+
 - **UDP Polling**
 The device will respond to udp packets with bytes in this format
 
