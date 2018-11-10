@@ -89,6 +89,7 @@ const uint8_t PixelPin = 2;
 NeoPixelBrightnessBus<NeoGrbFeature, NeoEsp8266Dma800KbpsMethod> *strip;
 NeoGamma<NeoGammaTableMethod> colorGamma;
 NeoPixelAnimator animations(1); //Number of animations
+NeoPixelAnimator effectAnimations(1);
 
 NeoVerticalSpriteSheet<NeoBufferMethod<NeoGrbFeature>> *spriteSheet;
 
@@ -98,7 +99,6 @@ uint16_t spritePixels = 16;
 uint16_t spriteFrames = 20;
 uint32_t spriteCounter = 0;
 uint32_t spriteRepeat = 1;
-uint32_t spriteAnimationTime = 60;
 uint8_t bytesPerPixel = 3;
 uint8_t *imageBuffer;
 uint16_t indexSprite;
@@ -178,6 +178,7 @@ HslColor hsl1=HslColor(0,0,0);
 HslColor hsl2=HslColor(0,0,0);
 
 int times=1;
+uint16_t effectCounter=0;
 int frames=1;
 int offset=0;
 volatile int frame=0;
@@ -596,6 +597,13 @@ void loop() { //main program loop
     }
   } else if (!playEffect()) { //when last frame of last effect switch back to streaming mode
     streaming=true;
+  } else {
+    if (effectCounter < times) {
+      animations.UpdateAnimations();
+      strip->Show();
+    } else {
+      blank();
+    }
   }
   server.handleClient();
 }
@@ -607,7 +615,7 @@ void blankFrame() {
 void paintFrame(RgbColor c) {
   //c=adjustToMaxMilliAmps(c); // do not allow to exceed max current
   for (uint16_t i = 0; i < pixelsPerStrip; i++) strip->SetPixelColor(i, c);
-  strip->Show();
+  if (command != "BLINK") strip->Show();
 };
 
 RgbColor adjustToMaxMilliAmps(RgbColor c) {
@@ -815,7 +823,7 @@ boolean playEffect() {
       line="";
       while (offset<play.length() && byte(play[offset])!=10) {  // extract line
         line+=play[offset++];
-      };
+      }
       if(byte(play[offset])==10) offset++; // skip line feed
 
       command=getCommand(line);  //Parse all parameters
@@ -829,7 +837,7 @@ boolean playEffect() {
       } else {
         rgb1=adjustToMaxMilliAmps(getRGB(params,1));  //retrieve RGB parameter and adjust down to stay within power limit
         rgb2=adjustToMaxMilliAmps(getRGB(params,2));   //retrieve RGB parameter and adjust down to stay within power limit
-      };
+      }
       if(RGBcolors>0) LastColor=rgb2;
 
       // Get HSB colors
@@ -840,7 +848,7 @@ boolean playEffect() {
       } else {
         hsb1=adjustToMaxMilliAmps(getHSB(params,1));
         hsb2=adjustToMaxMilliAmps(getHSB(params,2));
-      };
+      }
       if(HSBcolors>0) LastColor=hsb2;
 
       // Get HSL colors
@@ -851,20 +859,22 @@ boolean playEffect() {
       } else {
         hsl1=adjustToMaxMilliAmps(getHSL(params,1));
         hsl2=adjustToMaxMilliAmps(getHSL(params,2));
-      };
+      }
       if(HSLcolors>0) LastColor=hsl2;     
 
       times=getTimes(params);
       frames=getFrames(params);
-      
-      //frame++;        // advance to frame 1 to start animating effect
-   };   
- };
+      effectCounter = 0;
+      uint32_t effectAnimationTime = 16.66667 * double(frames);   // ms per 1/60 sec * (seconds per animation)
+  
+      animations.StartAnimation(0, effectAnimationTime, LoopAnimUpdate);
+   }
+ }
  if (DEBUG_MODE) {
   Serial.println("command:" + command + " rgb1:" + rgb1.R+","+rgb1.G+","+rgb1.B + " rgb2:" + rgb2.R+","+rgb2.G+","+rgb2.B + " duration(frames):" + frames + " repetitions:" + times);
  }
  //place here pointers to all Effect functions
- if(command=="BLINK") blink(rgb1, rgb2, frames, times);
+ //if(command=="BLINK") blink(rgb1, rgb2, frames, times);
  if(command=="HUE")   hue(rgb1, rgb2, frames, times);
  if(command=="HUE2")  hue2(rgb1, rgb2, frames, times); 
  if(command=="PULSE") pulse(rgb1, rgb2, frames, times);
@@ -996,6 +1006,13 @@ void blink(RgbColor rgb1, RgbColor rgb2, int frames, int times) {
   return;
 }
 
+void animBlink(RgbColor rgb1, RgbColor rgb2, float progress) {
+  if (progress < 0.5) {
+    paintFrame(rgb1);
+  } else {
+    paintFrame(rgb2);
+  }
+}
 
 void hue(RgbColor rgb1, RgbColor rgb2, int frames, int times) {
   // linear transition from rgb1 color to rgb2 color in "frames" frames, repeating "times" times
@@ -1195,25 +1212,38 @@ void LoopAnimUpdate(const AnimationParam& param) {
       // done, time to restart this position tracking animation/timer
       animations.RestartAnimation(param.index);
 
-      byte repeats = pixelsPerStrip / spritePixels;
-      // If there are less pixels in the strip then the sprite do it at least once
-      if (repeats == 0) {
-        repeats = 1;
-      // If the pixels in the strip are not evenly divisibly by the sprite pixels then repeat one more time to fill
-      } else if (pixelsPerStrip % spritePixels) {
-        repeats += 1;
+      if (playingSprite) {
+        byte repeats = pixelsPerStrip / spritePixels;
+        // If there are less pixels in the strip then the sprite do it at least once
+        if (repeats == 0) {
+          repeats = 1;
+        // If the pixels in the strip are not evenly divisibly by the sprite pixels then repeat one more time to fill
+        } else if (pixelsPerStrip % spritePixels) {
+          repeats += 1;
+        }
+        
+        // draw the frame and repeat accross all pixels
+        for (int i=0; i < repeats; i++) {
+          spriteSheet->Blt(*strip, i*spritePixels, indexSprite);
+        }
+        
+        indexSprite = (indexSprite + 1) % spriteFrames; // increment and wrap
+        if (indexSprite == 0) {
+          spriteCounter++;
+        }
+      } else if(command == "BLINK") {
+        effectCounter++;        
       }
-      
-      // draw the frame and repeat accross all pixels
-      for (int i=0; i < repeats; i++) {
-        spriteSheet->Blt(*strip, i*spritePixels, indexSprite);
-      }
-      
-      indexSprite = (indexSprite + 1) % spriteFrames; // increment and wrap
-      if (indexSprite == 0) {
-        spriteCounter++;
-      }
-  }  
+  }
+
+  if (!playingSprite) {
+        
+    if (command == "BLINK"){
+      animBlink(rgb1, rgb2, param.progress);
+    }
+    
+  }
+
 }
 
 // Frames = 10, cStart = [0,0,0] cEnd = [255,255,255] cAdjust = [0 + 255-0/10 * f]
@@ -1565,7 +1595,7 @@ bool handleSprite() { //SPRITE rgb255,0,0 rgb0,0,255 t10 f30 s1 x4 y3 a60
   playingSprite = true;
   indexSprite = 0;
   spriteCounter = 0;
-  spriteAnimationTime = 16.66667 * double(timePerAnimation) / double(spriteFrames);   // ms per 1/60 sec * (seconds per animation) / (Frames per animation)
+  uint32_t spriteAnimationTime = 16.66667 * double(timePerAnimation) / double(spriteFrames);   // ms per 1/60 sec * (seconds per animation) / (Frames per animation)
   spriteRepeat = timeRepeats;
   animations.StartAnimation(0, spriteAnimationTime, LoopAnimUpdate);
   return true;
