@@ -28,7 +28,7 @@
 #define min(a,b) ((a)<(b)?(a):(b))
 #define max(a,b) ((a)>(b)?(a):(b))
 
-DoubleResetDetector drd(DRD_TIMEOUT, DRD_ADDRESS); 
+DoubleResetDetector drd(DRD_TIMEOUT, DRD_ADDRESS);
 
 ///////////////////// USER DEFINED VARIABLES START HERE /////////////////////////////
 // NOTICE: these startup settings, especially pertaining to number of pixels and starting color
@@ -177,10 +177,11 @@ HsbColor hsb2=HsbColor(0,0,0);
 HslColor hsl1=HslColor(0,0,0);
 HslColor hsl2=HslColor(0,0,0);
 
-int times=1;
-uint16_t effectCounter=0;
-int frames=1;
-int offset=0;
+uint32_t times=1;
+bool playingEffect = false;
+uint32_t effectCounter=0;
+uint32_t frames=1;
+uint32_t offset=0;
 volatile int frame=0;
 
 WiFiManager wifiManager;
@@ -390,6 +391,10 @@ void setup() {
 
 
   server.on("/play", HTTP_POST, []() {
+    if (DEBUG_MODE) {
+      Serial.print(F("Received play POST "));Serial.println(server.arg("plain"));
+    }
+    udp.stop();
     // <effect> [RGB[r1],[g1],[b1]] [RGB[r],[g2],[b2]] [T<times>] [F<frames>]
     // Executes "effect" with the specified parameters 
     // Ej: blink rgb255,0,0 rgb0,0,0 t10 f10
@@ -397,88 +402,128 @@ void setup() {
     play=server.arg("plain");  //retrieve body from HTTP POST request
     streaming=false; //quit streaming mode and enter effects playing mode into main loop
     playingSprite = false;  //Stop playing the sprite animation
+    playingEffect=true;
     frame=0; //means it needs to fetch command from play sequence
     offset=0; // start parsing new line from leftmost character
+    effectCounter = 0; // Reset the animation repeater
+    animations.StopAll();
     //Serial.println("POST request");
     server.send(200,"text/plain", "OK");
     });
 
   server.on("/mcu_json", HTTP_POST, []() {
+    String updateString, cmd;
+    StaticJsonBuffer<2000> jsonBuffer;    
+    char str[64];
+    int val;
+    float fval;
+    byte v1, v2, v3;
+    String rt;
+    bool initD = false;
+
+    // Need to stop udp in case we're streaming.
+    udp.stop();
+    
     if (server.hasArg("plain") == false) {
-      server.send(422, "application/json", "{\"error\":\"HTTP BODY MISSING\"}");
+      server.send(422, "application/json", F("{\"error\":\"HTTP BODY MISSING\"}"));
+      udp.begin(udpPort);
       return;
     }
-    String updateString = server.arg("plain");  //retrieve body from HTTP POST request
+    updateString = server.arg("plain");  //retrieve body from HTTP POST request
     drd.stop(); //Prevents WiFi wiping during resets
-    StaticJsonBuffer<2000> jsonBuffer;
+    
     JsonObject& input = jsonBuffer.parseObject(server.arg("plain"));
     if (!input.success()) {     //Not a well formed json. Checking for regular command
+      
       if (updateString.length() > 64) {
-        server.send(422, "application/json", "{\"error\":\"COMMAND TOO LONG\"}");
+        server.send(422, "application/json", F("{\"error\":\"COMMAND TOO LONG\"}"));
+        udp.begin(udpPort);
         return;
       }
-      char str[64];
+      
       updateString.toCharArray(str, 64);
-      String cmd = strtok(str, " ");
+      cmd = strtok(str, " ");
       if (cmd.indexOf("pixels_per_strip") == 0) {
         blank();
-        int val = String(strtok(NULL, " ")).toInt();
+        val = String(strtok(NULL, " ")).toInt();
         
         if (!updatePixels(val)) {
-          server.send(422, "application/json", "{\"error\":\"PARAMETER OUT OF RANGE\",\"pixels_per_strip\":\"Failed\"}");
+          server.send(422, "application/json", F("{\"error\":\"PARAMETER OUT OF RANGE\",\"pixels_per_strip\":\"Failed\"}"));
+          udp.begin(udpPort);
           return;
         }
-        server.send(200,"application/json", "{\"pixels_per_strip\":\"Success\"}");
+        server.send(200,"application/json", F("{\"pixels_per_strip\":\"Success\"}"));
         startNeoPixelBus();
         initDisplay();
-        //restart();  //restart no longer needed for pixel update
         
       } else if (cmd.indexOf("chunk_size") == 0) {
-        int val = String(strtok(NULL, " ")).toInt();
-        if (!updateChunk(val)) return;
+        val = String(strtok(NULL, " ")).toInt();
+        if (!updateChunk(val)) {
+          server.send(422,"application/json", F("{\"chunk_size\":\"Failure\"}"));
+          udp.begin(udpPort);
+          return;
+        }
         setUdpPacketSize();
-        server.send(200,"application/json", "{\"chunk_size\":\"Success\"}");
+        server.send(200,"application/json", F("{\"chunk_size\":\"Success\"}"));
         
       } else if (cmd.indexOf("ma_per_pixel") == 0) {
-        int val = String(strtok(NULL, " ")).toInt();
-        if (!updateMA(val)) return;
+        val = String(strtok(NULL, " ")).toInt();
+        if (!updateMA(val)) {
+          server.send(422,"application/json", F("{\"ma_per_pixel\":\"Failure\"}"));
+          udp.begin(udpPort);
+          return;
+        }
         initDisplay();
-        server.send(200,"application/json", "{\"ma_per_pixel\":\"Success\"}");
+        server.send(200,"application/json", F("{\"ma_per_pixel\":\"Success\"}"));
         
       } else if (cmd.indexOf("device_name") == 0) {
-        if (!updateName(String(strtok(NULL, " ")))) return;
-        server.send(200,"application/json", "{\"device_name\":\"Success\"}");
+        if (!updateName(String(strtok(NULL, " ")))) {
+          server.send(422,"application/json", F("{\"device_name\":\"Failure\"}"));
+          udp.begin(udpPort);
+          return;
+        }
+        server.send(200,"application/json", F("{\"device_name\":\"Success\"}"));
         
       } else if (cmd.indexOf("amps_limit") == 0) {
-        float val = String(strtok(NULL, " ")).toFloat();
-        if (!updateAmps(val)) return;
+        fval = String(strtok(NULL, " ")).toFloat();
+        if (!updateAmps(val)) {
+          server.send(422,"application/json", F("{\"amps_limit\":\"Failure\"}"));
+          udp.begin(udpPort);
+          return;
+        }
         initDisplay();
-        server.send(200,"application/json", "{\"amps_limit\":\"Success\"}");
+        server.send(200,"application/json", F("{\"amps_limit\":\"Success\"}"));
         
       } else if (cmd.indexOf("udp_streaming_port") == 0) {
-        int val = String(strtok(NULL, " ")).toInt();
-        if (!updateUDP(val)) return;
+        val = String(strtok(NULL, " ")).toInt();
+        if (!updateUDP(val)) {
+          server.send(422,"application/json", F("{\"udp_streaming_port\":\"Failure\"}"));
+          udp.begin(udpPort);
+          return;
+        }
         startUDP();
-        server.send(200,"application/json", "{\"udp_streaming_port\":\"Success\"}");
-        //blankRestart();
+        server.send(200,"application/json", F("{\"udp_streaming_port\":\"Success\"}"));
         
       } else if (cmd.indexOf("warmup_color") == 0) {
-        byte v1 = String(strtok(NULL, " ")).toInt();
-        byte v2 = String(strtok(NULL, " ")).toInt();
-        byte v3 = String(strtok(NULL, " ")).toInt();
-        updateWarmUp(v1, v2, v3);
+        v1 = String(strtok(NULL, " ")).toInt();
+        v2 = String(strtok(NULL, " ")).toInt();
+        v3 = String(strtok(NULL, " ")).toInt();
+        if (!updateWarmUp(v1, v2, v3)) {
+          server.send(422,"application/json", F("{\"warmup_color\":\"Failure\"}"));
+          udp.begin(udpPort);
+          return;         
+        }
         initDisplay();
-        server.send(200,"application/json", "{\"warmup_color\":\"Success\"}");
+        server.send(200,"application/json", F("{\"warmup_color\":\"Success\"}"));
         
       } else {
-        server.send(422,"application/json", "{\"error\":\"INVALID COMMAND\"}");
+        server.send(422,"application/json", F("{\"error\":\"INVALID COMMAND\"}"));
       } 
       
     } else {  //JSON detected
       JsonObject& root = jsonBuffer.createObject();
-      String rt;
+
       blank();
-      bool initD = false;
 
       if (input["pixels_per_strip"] != NULL) {
         root["pixels_per_strip"] = (updatePixels(input["pixels_per_strip"]) ? "Success" : "Failed");
@@ -497,8 +542,7 @@ void setup() {
       }
       
       if (input["device_name"].success()) {
-        const char* dName = input["device_name"];       
-        root["device_name"] = (updateName(String(dName)) ? "Success" : "Failed");
+        root["device_name"] = (updateName(String((const char*)input["device_name"])) ? "Success" : "Failed");
       }
       
       if (input["amps_limit"].success()) {
@@ -509,13 +553,12 @@ void setup() {
       
       if (input["udp_streaming_port"] != NULL) {
         root["udp_streaming_port"] = (updateUDP(input["udp_streaming_port"]) ? "Success" : "Failed");
-        startUDP();
       }
       
       if (input["warmup_color"] != NULL ) {
-        byte v1 = input["warmup_color"][0];
-        byte v2 = input["warmup_color"][1];
-        byte v3 = input["warmup_color"][2];
+        v1 = input["warmup_color"][0];
+        v2 = input["warmup_color"][1];
+        v3 = input["warmup_color"][2];
         root["warmup_color"] = (updateWarmUp(v1, v2, v3) ? "Success" : "Failed");
         initD = true;
       }
@@ -523,7 +566,8 @@ void setup() {
       server.send(200, "application/json", rt);
       if (initD) initDisplay();
     }
-    
+
+    udp.begin(udpPort);
    });
 
   // **** FILE SERVER HTTP ENDPOINTS **** //
@@ -570,11 +614,16 @@ void setup() {
 }
 
 void loop() { //main program loop
+
+  if (DEBUG_MODE && playingEffect) {
+    Serial.print(F("Playing "));Serial.println(play);
+  }
+  
   int opcode = parseUdpPoll();
   // opcodes between 0 and 99 represent the chunkID
-  if (opcode <= CHUNKIDMAX && opcode >= CHUNKIDMIN && streaming && !playingSprite) {
+  if (opcode <= CHUNKIDMAX && opcode >= CHUNKIDMIN && streaming && !playingSprite && !playingEffect) {
     playStreaming(opcode);
-  } else if (opcode == UPDATEFRAME && streaming && !playingSprite) {
+  } else if (opcode == UPDATEFRAME && streaming && !playingSprite && !playingEffect) {
     udpUpdateFrame();
   } else if (opcode == CONFIG) {
     udpConfigDevice();
@@ -593,17 +642,21 @@ void loop() { //main program loop
   } else if (streaming) {
     if(lastStreamingFrame!=0 && millis()-lastStreamingFrame>STREAMING_TIMEOUT*1000) {
       blankFrame();
+      strip->Show();
       lastStreamingFrame=0;
     }
-  } else if (!playEffect()) { //when last frame of last effect switch back to streaming mode
-    streaming=true;
-  } else {
+  } else if (playingEffect && playEffect()) { //when last frame of last effect switch back to streaming mode
     if (effectCounter < times) {
       animations.UpdateAnimations();
       strip->Show();
     } else {
       blank();
     }
+  } else {
+     streaming=true;
+     udp.begin(udpPort);
+     playingEffect=false;
+     playingSprite=false;
   }
   server.handleClient();
 }
@@ -615,7 +668,6 @@ void blankFrame() {
 void paintFrame(RgbColor c) {
   //c=adjustToMaxMilliAmps(c); // do not allow to exceed max current
   for (uint16_t i = 0; i < pixelsPerStrip; i++) strip->SetPixelColor(i, c);
-  if (command != "BLINK") strip->Show();
 };
 
 RgbColor adjustToMaxMilliAmps(RgbColor c) {
@@ -811,10 +863,11 @@ int getTimes(String params) {
 }
 
 boolean playEffect() {
-  if (DEBUG_MODE) {
-    Serial.println(play);
-  }
+
   if(frame==0) {  // frame zero means to go get a command line from the HTTP request body
+    if (DEBUG_MODE) {
+      Serial.println(play);
+    }
     String line,params;
     int pos,RGBcolors,HSBcolors,HSLcolors;
     if(offset>=play.length()) { // when "play sequence" is finished had to go back to streaming mode
@@ -828,6 +881,13 @@ boolean playEffect() {
 
       command=getCommand(line);  //Parse all parameters
       if (command.equals("SPRITE")) return handleSprite();
+      else if (command.equals("BLANK")) {
+        blankFrame();
+        strip->Show();
+        frame = 1;
+        playingEffect = false;
+        return false;
+      }
       params=getParams(line);
       // Get RBG colors
       RGBcolors=getColors(params,"RGB");
@@ -860,7 +920,7 @@ boolean playEffect() {
         hsl1=adjustToMaxMilliAmps(getHSL(params,1));
         hsl2=adjustToMaxMilliAmps(getHSL(params,2));
       }
-      if(HSLcolors>0) LastColor=hsl2;     
+      if(HSLcolors>0) LastColor=hsl2;
 
       times=getTimes(params);
       frames=getFrames(params);
@@ -868,28 +928,30 @@ boolean playEffect() {
       uint32_t effectAnimationTime = 16.66667 * double(frames);   // ms per 1/60 sec * (seconds per animation)
   
       animations.StartAnimation(0, effectAnimationTime, LoopAnimUpdate);
-   }
- }
- if (DEBUG_MODE) {
-  Serial.println("command:" + command + " rgb1:" + rgb1.R+","+rgb1.G+","+rgb1.B + " rgb2:" + rgb2.R+","+rgb2.G+","+rgb2.B + " duration(frames):" + frames + " repetitions:" + times);
- }
- //place here pointers to all Effect functions
- //if(command=="BLINK") blink(rgb1, rgb2, frames, times);
- if(command=="HUE")   hue(rgb1, rgb2, frames, times);
- if(command=="HUE2")  hue2(rgb1, rgb2, frames, times); 
- if(command=="PULSE") pulse(rgb1, rgb2, frames, times);
- if(command=="BLANK") blankFrame();
- if(command=="HUEHSB") huehsb(hsb1,hsb2,frames, times);
- if(command=="HUEHSL") huehsl(hsl1,hsl2,frames, times);
+      if (DEBUG_MODE) {
+        Serial.println("command:" + command + " rgb1:" + rgb1.R+","+rgb1.G+","+rgb1.B + " rgb2:" + rgb2.R+","+rgb2.G+","+rgb2.B + " duration(frames):" + frames + " repetitions:" + times);
+      }
+    }
+  }
 
- return true;
+//  //place here pointers to all Effect functions
+//  if(command=="BLINK") frame = 1;//blink(rgb1, rgb2, frames, times);
+//  else if(command=="HUE")   frame = 1;//hue(rgb1, rgb2, frames, times);
+//  else if(command=="HUE2")  frame = 1;hue2(rgb1, rgb2, frames, times); 
+//  else if(command=="PULSE") frame = 1;//pulse(rgb1, rgb2, frames, times);
+//  else if(command=="BLANK") blankFrame();
+//  else if(command=="HUEHSB") huehsb(hsb1,hsb2,frames, times);
+//  else if(command=="HUEHSL") huehsl(hsl1,hsl2,frames, times);
+  // Animator determines which animation to run other than blank
+  frame = 1;
+  return true;
 }
 
 void playStreaming(int chunkID) {
   //take initial time //MDB
   arrivedAt=micros();
   
-  if (DEBUG_MODE) { // If Debug mode is on print some stuff
+  if (PACKETDROP_DEBUG_MODE) { // If Debug mode is on print some stuff
     Serial.println(F("---Incoming---"));
     Serial.print(F("ChunkID: "));
     Serial.println(chunkID);
@@ -904,7 +966,7 @@ void playStreaming(int chunkID) {
   //const uint16_t initialOffset = chunkSize * (action - 1);
   const uint16_t initialOffset = chunkSize * chunkID;
   
-  if (DEBUG_MODE) { // If Debug mode is on print some stuff
+  if (PACKETDROP_DEBUG_MODE) { // If Debug mode is on print some stuff
     Serial.print(F("---------: "));
     Serial.print(chunkSize);
     Serial.print(F("   "));
@@ -931,7 +993,7 @@ void playStreaming(int chunkID) {
   }
   
 
-  if (DEBUG_MODE) { // If Debug mode is on print some stuff
+  if (PACKETDROP_DEBUG_MODE) { // If Debug mode is on print some stuff
     Serial.println(F("Finished For Loop!"));
   }
 
@@ -949,7 +1011,7 @@ void playStreaming(int chunkID) {
   //packetSize=0; // implicit frame 0 will have packetSize == 0  MDBx
   arrivedAt=micros();
 
-  if (DEBUG_MODE) { // If Debug mode is on print some stuff
+  if (PACKETDROP_DEBUG_MODE) { // If Debug mode is on print some stuff
     Serial.println(F("--end of packet and stuff--"));
     Serial.println(F(""));
   }
@@ -1029,6 +1091,10 @@ void hue(RgbColor rgb1, RgbColor rgb2, int frames, int times) {
   return;
 }
 
+void animHue(RgbColor rgb1, RgbColor rgb2, float progress) {  
+  paintFrame(RgbColor::LinearBlend(rgb1, rgb2, progress));
+}
+
 void hue2(RgbColor rgb1, RgbColor rgb2, int frames, int times) {
   // linear transition from rgb1 color to rgb2 color in "frames" frames and back to rgb1, repeating "times" times
 
@@ -1045,6 +1111,14 @@ void hue2(RgbColor rgb1, RgbColor rgb2, int frames, int times) {
     frame++;
   };
   return;
+}
+
+void animHue2(RgbColor rgb1, RgbColor rgb2, float progress) {
+  if (progress < 0.5) {
+    paintFrame(RgbColor::LinearBlend(rgb1, rgb2, progress * 2));
+  } else {
+    paintFrame(RgbColor::LinearBlend(rgb2, rgb1, (progress - 0.5) * 2));
+  }
 }
 
 void pulse(RgbColor rgb1, RgbColor rgb2, int frames, int times) {
@@ -1065,6 +1139,14 @@ void pulse(RgbColor rgb1, RgbColor rgb2, int frames, int times) {
   return;
 }
 
+void animPulse(RgbColor rgb1, RgbColor rgb2, float progress) {
+  if (progress < 0.5) {
+    paintFrame(RgbColor::LinearBlend(rgb1, rgb2, progress * 2));
+  } else {
+    blankFrame();
+  }
+}
+
 void huehsb(HsbColor hsb1, HsbColor hsb2, int frames, int times) {
   // linear transition between hsb1 ro hsb2 color around the HSB wheel during "frames" frames and repeated "times" times
   HsbColor hsb;
@@ -1078,6 +1160,11 @@ void huehsb(HsbColor hsb1, HsbColor hsb2, int frames, int times) {
     frame++;
   };
   return;
+}
+
+void animHueHsb(HsbColor hsb1, HsbColor hsb2, float progress) {
+  // Linear blend on HSB colors then convert to RGB
+  paintFrame(RgbColor(HsbColor::LinearBlend<NeoHueBlendShortestDistance>(hsb1, hsb2, progress)));
 }
 
 void huehsl(HslColor hsl1, HslColor hsl2, int frames, int times) {
@@ -1094,6 +1181,11 @@ void huehsl(HslColor hsl1, HslColor hsl2, int frames, int times) {
     frame++;
   };
   return;
+}
+
+void animHueHsl(HslColor hsl1, HslColor hsl2, float progress) {
+  // Linear blend on HSL colors then convert to RGB
+  paintFrame(RgbColor(HslColor::LinearBlend<NeoHueBlendShortestDistance>(hsl1, hsl2, progress)));
 }
 
 bool updatePixels(int val) {
@@ -1148,6 +1240,7 @@ void blank() {
   play="blank";
   streaming=false;
   playingSprite=false;
+  playingEffect=true;
   frame=0;
   offset=0;
   playEffect();
@@ -1200,6 +1293,7 @@ void initDisplay() {
   InitialColor=adjustToMaxMilliAmps(InitialColor);
   for(int i=0;i<=90;i++) {
     paintFrame(RgbColor(InitialColor.R*i/90.0,InitialColor.G*i/90.0,InitialColor.B*i/90.0));
+    strip->Show();
     delay(16);
   };
 }
@@ -1231,17 +1325,33 @@ void LoopAnimUpdate(const AnimationParam& param) {
         if (indexSprite == 0) {
           spriteCounter++;
         }
-      } else if(command == "BLINK") {
-        effectCounter++;        
+      } else {
+        if (DEBUG_MODE) {
+          Serial.println(F("Incrementing Effect"));
+        }
+        effectCounter++;
       }
   }
 
+  // Animator determines which animation to run
+
   if (!playingSprite) {
-        
+    if (DEBUG_MODE) {
+      Serial.print(F("Progress"));Serial.println(param.progress);  
+    }
     if (command == "BLINK"){
       animBlink(rgb1, rgb2, param.progress);
+    } else if (command == "HUE") {
+      animHue(rgb1, rgb2, param.progress);
+    } else if (command == "HUE2") {
+      animHue2(rgb1, rgb2, param.progress);
+    } else if (command == "PULSE") {
+      animPulse(rgb1, rgb2, param.progress);
+    } else if (command == "HUEHSB") {
+      animHueHsb(hsb1, hsb2, param.progress);
+    } else if (command == "HUEHSL") {
+      animHueHsl(hsl1, hsl2, param.progress);
     }
-    
   }
 
 }
@@ -1710,6 +1820,9 @@ void spriteSetup() {  //Loads default sprite object
 // Examines the first 20 bytes of a udp packet to determine if it matches 'EnviralDesignPxlNode'
 // Returns the opcode
 int parseUdpPoll() {
+  if (playingEffect) {
+    return NOPACKET;
+  }
   int packetSize = udp.parsePacket();
   
   if (!packetSize) {
@@ -1717,14 +1830,7 @@ int parseUdpPoll() {
   }
 
   udp.read(packetBuffer, udpPacketSize);
-  if (DEBUG_MODE) {
-    for (int j = 0; j < udpPacketSize; j++) {
-      Serial.print(packetBuffer[j]);Serial.print(F(":"));
-      Serial.print((char)packetBuffer[j]);Serial.print(F(" "));
-      
-    }
-    Serial.println(F("EndPacket"));
-  }
+
   int i = 0;
   
   for (; i < IDLENGTH; i++) {
@@ -1735,8 +1841,8 @@ int parseUdpPoll() {
       return NOPACKET;
     }
   } 
-  if (DEBUG_MODE) {
-    Serial.println(F("Matched"));
+  if (PACKETDROP_DEBUG_MODE) {
+    Serial.print(F("Matched ")); Serial.println(packetBuffer[i]);
   }
   return packetBuffer[i];
 }
@@ -1745,7 +1851,7 @@ void udpUpdateFrame() {
 //  framesMD[frameIndex].frame=frameNumber;
 //  framesMD[frameIndex].part=chunkID;
 //  framesMD[frameIndex].arrivedAt=arrivedAt;
-  if (DEBUG_MODE) {
+  if (PACKETDROP_DEBUG_MODE) {
     Serial.println("Updating Frame");
   }
   pinMode(BUILTIN_LED, OUTPUT);
@@ -1760,7 +1866,7 @@ void udpUpdateFrame() {
   // Collect data  MDB
   //framesMD[frameIndex].adjustedPower=millisMultiplier;
 
-  if (DEBUG_MODE) { // If Debug mode is on print some stuff
+  if (PACKETDROP_DEBUG_MODE) { // If Debug mode is on print some stuff
     Serial.println(F("Trying to update leds..."));
     Serial.print(F("Dimming leds to: "));
     Serial.println( millisMultiplier );
@@ -1779,7 +1885,7 @@ void udpUpdateFrame() {
   lastStreamingFrame=millis();
   milliAmpsCounter = 0; // reset the milliAmpsCounter for the next frame.
 
-  if (DEBUG_MODE) { // If Debug mode is on print some stuff
+  if (PACKETDROP_DEBUG_MODE) { // If Debug mode is on print some stuff
     Serial.println(F("Finished updating Leds!"));
   }
 
@@ -1894,7 +2000,7 @@ void udpSendPollReply() {
   ReplyBuffer[i++] = InitColor[1];
   ReplyBuffer[i++] = InitColor[2];
   ReplyBuffer[i] = '\0';
-  if (DEBUG_MODE) {
+  if (PACKETDROP_DEBUG_MODE) {
     Serial.print(F("Sending message to "));Serial.println(udp.remoteIP());
     Serial.println(F("Contents: "));
     for (i = 0; i < sizeof(ReplyBuffer); i++) {
