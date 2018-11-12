@@ -97,8 +97,6 @@ NeoVerticalSpriteSheet<NeoBufferMethod<NeoGrbFeature>> *spriteSheet;
 #define MAX_SPRITESIZE 30000
 uint16_t spritePixels = 16;
 uint16_t spriteFrames = 20;
-uint32_t spriteCounter = 0;
-uint32_t spriteRepeat = 1;
 uint8_t bytesPerPixel = 3;
 uint8_t *imageBuffer;
 uint16_t indexSprite;
@@ -206,9 +204,6 @@ void setup() {
   
   //Initializes NeoPixelBus
   startNeoPixelBus();
-
-  //Initialize SpriteObject
-  spriteSetup();
   
   // We start by connecting to a WiFi network
   //Serial.print("Connecting to ");
@@ -408,6 +403,7 @@ void setup() {
     effectCounter = 0; // Reset the animation repeater
     animations.StopAll();
     //Serial.println("POST request");
+    parseEffect();
     server.send(200,"text/plain", "OK");
     });
 
@@ -444,7 +440,7 @@ void setup() {
       updateString.toCharArray(str, 64);
       cmd = strtok(str, " ");
       if (cmd.indexOf("pixels_per_strip") == 0) {
-        blank();
+        blankFrame();
         val = String(strtok(NULL, " ")).toInt();
         
         if (!updatePixels(val)) {
@@ -523,7 +519,7 @@ void setup() {
     } else {  //JSON detected
       JsonObject& root = jsonBuffer.createObject();
 
-      blank();
+      blankFrame();
 
       if (input["pixels_per_strip"] != NULL) {
         root["pixels_per_strip"] = (updatePixels(input["pixels_per_strip"]) ? "Success" : "Failed");
@@ -623,46 +619,42 @@ void loop() { //main program loop
   // opcodes between 0 and 99 represent the chunkID
   if (opcode <= CHUNKIDMAX && opcode >= CHUNKIDMIN && streaming && !playingSprite && !playingEffect) {
     playStreaming(opcode);
+    
   } else if (opcode == UPDATEFRAME && streaming && !playingSprite && !playingEffect) {
     udpUpdateFrame();
+    
   } else if (opcode == CONFIG) {
     udpConfigDevice();
+    
   } else if (opcode == POLL) {
     udpSendPollReply();
+    
   } else if (opcode == POLLREPLY) {
-    //POLLREPLY
-  } else if (playingSprite) {
-    if (spriteCounter < spriteRepeat) {
-      animations.UpdateAnimations();
-      strip->Show();
-    } else {
-      blank();
-    }
-  // Streaming but nothing received check timeout
-  } else if (streaming) {
-    if(lastStreamingFrame!=0 && millis()-lastStreamingFrame>STREAMING_TIMEOUT*1000) {
-      blankFrame();
-      strip->Show();
-      lastStreamingFrame=0;
-    }
-  } else if (playingEffect && playEffect()) { //when last frame of last effect switch back to streaming mode
+    //POLLREPLY safe to ignore
+    
+  } else if (playingEffect) {
     if (effectCounter < times) {
       animations.UpdateAnimations();
       strip->Show();
     } else {
-      blank();
+      if (playingSprite) blankFrame();
+      streaming=true;
+      udp.begin(udpPort);
+      playingEffect=false;
+      playingSprite=false;
     }
-  } else {
-     streaming=true;
-     udp.begin(udpPort);
-     playingEffect=false;
-     playingSprite=false;
+    
+  // Streaming but nothing received check timeout
+  } else if (streaming && lastStreamingFrame!=0 && millis()-lastStreamingFrame>STREAMING_TIMEOUT*1000) {
+      blankFrame();
+      lastStreamingFrame=0;
   }
   server.handleClient();
 }
 
 void blankFrame() {
   paintFrame(RgbColor(0,0,0));
+  strip->Show();
 };
 
 void paintFrame(RgbColor c) {
@@ -805,47 +797,6 @@ HslColor getHSL(String params, int n) {
   return HslColor(h/360.0f,s/100.0f,l/100.0f);
 };
 
-void getSettings(String params) {
-  int pos=0;int pos2=0;
-  String topo="RA";
-  int x=1;int y=1;
-  params.toUpperCase();
-  params+=" "; //add space terminator
-  
-  // get milliamps per logical pixel
-  pos=params.indexOf("MAPERPIXEL");
-  if(pos>0) mAPerPixel=params.substring(pos+1).toInt();
-  
-  //get total Amps budget
-  pos=params.indexOf("AMPS");
-  if(pos>0) amps=params.substring(pos+1).toInt();
-
-  //get module name
-  pos=params.indexOf("NAME");
-  if(pos>=0) {
-    while (params.substring(pos,pos+1)==" ") pos++; //skip spaces
-    pos2=params.indexOf(" ",pos);
-    if (pos2>=0) deviceName=params.substring(pos,pos2);
-  };
-  
-  //get topology
-  pos=params.indexOf("TOPOLOGY");
-  while (params.substring(pos,pos+1)==" ") pos++; //skip spaces
-  if(params.substring(pos,pos+2)=="R ") topo="R";
-  if(params.substring(pos,pos+2)=="C ") topo="C";
-  if(params.substring(pos,pos+3)=="RA ") topo="RA";
-  if(params.substring(pos,pos+3)=="CA ") topo="CA";
-  pos=params.indexOf(" ",pos);
-  while (params.substring(pos,pos+1)==" ") pos++; //skip spaces
-  x=params.substring(pos).toInt();
-  pos=params.indexOf(" ",pos+1);
-  y=params.substring(pos).toInt();
-
-  return;
-}
-
-
-
 int getFrames(String params) {
   int f=1;
   int pos=params.indexOf("F");
@@ -862,89 +813,83 @@ int getTimes(String params) {
   return t;
 }
 
-boolean playEffect() {
+void parseEffect() {
 
-  if(frame==0) {  // frame zero means to go get a command line from the HTTP request body
-    if (DEBUG_MODE) {
-      Serial.println(play);
-    }
-    String line,params;
-    int pos,RGBcolors,HSBcolors,HSLcolors;
-    if(offset>=play.length()) { // when "play sequence" is finished had to go back to streaming mode
-      return false;
-    } else { // try to fetch next "play sequence" line
-      line="";
-      while (offset<play.length() && byte(play[offset])!=10) {  // extract line
-        line+=play[offset++];
-      }
-      if(byte(play[offset])==10) offset++; // skip line feed
-
-      command=getCommand(line);  //Parse all parameters
-      if (command.equals("SPRITE")) return handleSprite();
-      else if (command.equals("BLANK")) {
-        blankFrame();
-        strip->Show();
-        frame = 1;
-        playingEffect = false;
-        return false;
-      }
-      params=getParams(line);
-      // Get RBG colors
-      RGBcolors=getColors(params,"RGB");
-      if(RGBcolors==1) {
-        rgb1=LastColor;
-        rgb2=adjustToMaxMilliAmps(getRGB(params,1));
-      } else {
-        rgb1=adjustToMaxMilliAmps(getRGB(params,1));  //retrieve RGB parameter and adjust down to stay within power limit
-        rgb2=adjustToMaxMilliAmps(getRGB(params,2));   //retrieve RGB parameter and adjust down to stay within power limit
-      }
-      if(RGBcolors>0) LastColor=rgb2;
-
-      // Get HSB colors
-      HSBcolors=getColors(params,"HSB");
-      if(HSBcolors==1) {
-        hsb1=LastColor;
-        hsb2=adjustToMaxMilliAmps(getHSB(params,1));
-      } else {
-        hsb1=adjustToMaxMilliAmps(getHSB(params,1));
-        hsb2=adjustToMaxMilliAmps(getHSB(params,2));
-      }
-      if(HSBcolors>0) LastColor=hsb2;
-
-      // Get HSL colors
-      HSLcolors=getColors(params,"HSL");
-      if(HSLcolors==1) {
-        hsl1=LastColor;
-        hsl2=adjustToMaxMilliAmps(getHSL(params,1));
-      } else {
-        hsl1=adjustToMaxMilliAmps(getHSL(params,1));
-        hsl2=adjustToMaxMilliAmps(getHSL(params,2));
-      }
-      if(HSLcolors>0) LastColor=hsl2;
-
-      times=getTimes(params);
-      frames=getFrames(params);
-      effectCounter = 0;
-      uint32_t effectAnimationTime = 16.66667 * double(frames);   // ms per 1/60 sec * (seconds per animation)
-  
-      animations.StartAnimation(0, effectAnimationTime, LoopAnimUpdate);
-      if (DEBUG_MODE) {
-        Serial.println("command:" + command + " rgb1:" + rgb1.R+","+rgb1.G+","+rgb1.B + " rgb2:" + rgb2.R+","+rgb2.G+","+rgb2.B + " duration(frames):" + frames + " repetitions:" + times);
-      }
-    }
+  if (DEBUG_MODE) {
+    Serial.println(play);
   }
+  String line,params;
+  int pos,RGBcolors,HSBcolors,HSLcolors;
+  if(offset>=play.length()) { // when "play sequence" is finished had to go back to streaming mode
+    times = 0;
+  } else { // try to fetch next "play sequence" line
+    line="";
+    while (offset<play.length() && byte(play[offset])!=10) {  // extract line
+      line+=play[offset++];
+    }
+    if(byte(play[offset])==10) offset++; // skip line feed
 
-//  //place here pointers to all Effect functions
-//  if(command=="BLINK") frame = 1;//blink(rgb1, rgb2, frames, times);
-//  else if(command=="HUE")   frame = 1;//hue(rgb1, rgb2, frames, times);
-//  else if(command=="HUE2")  frame = 1;hue2(rgb1, rgb2, frames, times); 
-//  else if(command=="PULSE") frame = 1;//pulse(rgb1, rgb2, frames, times);
-//  else if(command=="BLANK") blankFrame();
-//  else if(command=="HUEHSB") huehsb(hsb1,hsb2,frames, times);
-//  else if(command=="HUEHSL") huehsl(hsl1,hsl2,frames, times);
+    command=getCommand(line);  //Parse all parameters
+    if (command.equals("SPRITE")) {
+      if (!handleSprite()) {
+        times = 0;
+      }
+      frame = 1;
+      return;
+    } else if (command.equals("BLANK")) {
+      blankFrame();
+      frame = 1;
+      times = 0;
+      return;
+    }
+    params=getParams(line);
+    // Get RBG colors
+    RGBcolors=getColors(params,"RGB");
+    if(RGBcolors==1) {
+      rgb1=LastColor;
+      rgb2=adjustToMaxMilliAmps(getRGB(params,1));
+    } else {
+      rgb1=adjustToMaxMilliAmps(getRGB(params,1));  //retrieve RGB parameter and adjust down to stay within power limit
+      rgb2=adjustToMaxMilliAmps(getRGB(params,2));   //retrieve RGB parameter and adjust down to stay within power limit
+    }
+    if(RGBcolors>0) LastColor=rgb2;
+
+    // Get HSB colors
+    HSBcolors=getColors(params,"HSB");
+    if(HSBcolors==1) {
+      hsb1=LastColor;
+      hsb2=adjustToMaxMilliAmps(getHSB(params,1));
+    } else {
+      hsb1=adjustToMaxMilliAmps(getHSB(params,1));
+      hsb2=adjustToMaxMilliAmps(getHSB(params,2));
+    }
+    if(HSBcolors>0) LastColor=hsb2;
+
+    // Get HSL colors
+    HSLcolors=getColors(params,"HSL");
+    if(HSLcolors==1) {
+      hsl1=LastColor;
+      hsl2=adjustToMaxMilliAmps(getHSL(params,1));
+    } else {
+      hsl1=adjustToMaxMilliAmps(getHSL(params,1));
+      hsl2=adjustToMaxMilliAmps(getHSL(params,2));
+    }
+    if(HSLcolors>0) LastColor=hsl2;
+
+    times=getTimes(params);
+    frames=getFrames(params);
+    effectCounter = 0;
+    uint32_t effectAnimationTime = 16.66667 * double(frames);   // ms per 1/60 sec * (seconds per animation)
+
+    animations.StartAnimation(0, effectAnimationTime, LoopAnimUpdate);
+    if (DEBUG_MODE) {
+      Serial.println("command:" + command + " rgb1:" + rgb1.R+","+rgb1.G+","+rgb1.B + " rgb2:" + rgb2.R+","+rgb2.G+","+rgb2.B + " duration(frames):" + frames + " repetitions:" + times);
+    }
+  }  
+
   // Animator determines which animation to run other than blank
   frame = 1;
-  return true;
+
 }
 
 void playStreaming(int chunkID) {
@@ -1053,21 +998,6 @@ String getMac() {
 
 // *** PLACE EFFECT FUNCTIONS BELOW ****
 
-void blink(RgbColor rgb1, RgbColor rgb2, int frames, int times) {
-  // Blink all leds showing each color during "frames" frames and for "times" times
-
-  if(frame >= frames*2*times) { //if already played all frames & times, it means the effect ended
-    frame=0; 
-  } else {
-    if(frame % (frames*2) <= frames)   //calculate which frame is within each time, if it is within the first half show rgb1 otherwise rgb2
-      paintFrame(rgb1);
-    else
-      paintFrame(rgb2);
-    frame++;
-  };
-  return;
-}
-
 void animBlink(RgbColor rgb1, RgbColor rgb2, float progress) {
   if (progress < 0.5) {
     paintFrame(rgb1);
@@ -1076,41 +1006,8 @@ void animBlink(RgbColor rgb1, RgbColor rgb2, float progress) {
   }
 }
 
-void hue(RgbColor rgb1, RgbColor rgb2, int frames, int times) {
-  // linear transition from rgb1 color to rgb2 color in "frames" frames, repeating "times" times
-
-  if(frame >= frames*times) { //if already played all frames & times, it means the effect ended
-    frame=0; 
-  } else {
-    //int f=frame % frames;
-    float f=(frame % frames)*frames/(frames-1.0);  
-    //transition from rgb1 to rgb2
-    paintFrame(RgbColor(rgb1.R+(rgb2.R-rgb1.R)*f/frames,rgb1.G+(rgb2.G-rgb1.G)*f/frames,rgb1.B+(rgb2.B-rgb1.B)*f/frames));
-    frame++;
-  };
-  return;
-}
-
 void animHue(RgbColor rgb1, RgbColor rgb2, float progress) {  
   paintFrame(RgbColor::LinearBlend(rgb1, rgb2, progress));
-}
-
-void hue2(RgbColor rgb1, RgbColor rgb2, int frames, int times) {
-  // linear transition from rgb1 color to rgb2 color in "frames" frames and back to rgb1, repeating "times" times
-
-  if(frame >= frames*2*times) { //if already played all frames & times, it means the effect ended
-    frame=0; 
-  } else {
-    int f=frame % (frames*2);
-    
-    if(f <= frames)   //calculate if it is transitioning from rgb1 to rgb2 or the opposite
-      //transition from rgb1 to rgb2
-      paintFrame(RgbColor(rgb1.R+(rgb2.R-rgb1.R)*f/frames,rgb1.G+(rgb2.G-rgb1.G)*f/frames,rgb1.B+(rgb2.B-rgb1.B)*f/frames));
-    else
-      paintFrame(RgbColor(rgb1.R+(rgb2.R-rgb1.R)*(2*frames-f)/frames,rgb1.G+(rgb2.G-rgb1.G)*(2*frames-f)/frames,rgb1.B+(rgb2.B-rgb1.B)*(2*frames-f)/frames));
-    frame++;
-  };
-  return;
 }
 
 void animHue2(RgbColor rgb1, RgbColor rgb2, float progress) {
@@ -1121,66 +1018,17 @@ void animHue2(RgbColor rgb1, RgbColor rgb2, float progress) {
   }
 }
 
-void pulse(RgbColor rgb1, RgbColor rgb2, int frames, int times) {
-  // linear transition from rgb1 color to rgb2 color in "frames" frames, then blank frame and wait for "frames" frames, repeating "times" times
-
-  if(frame >= frames*2*times) { //if already played all frames & times, it means the effect ended
-    frame=0; 
-  } else {
-    int f=frame % (frames*2);
-    
-    if(f <= frames)   //calculate if it is transitioning from rgb1 to rgb2 or the opposite
-      //transition from rgb1 to rgb2
-      paintFrame(RgbColor(rgb1.R+(rgb2.R-rgb1.R)*f/frames,rgb1.G+(rgb2.G-rgb1.G)*f/frames,rgb1.B+(rgb2.B-rgb1.B)*f/frames));
-    else
-      blankFrame();
-    frame++;
-  };
-  return;
-}
-
 void animPulse(RgbColor rgb1, RgbColor rgb2, float progress) {
   if (progress < 0.5) {
     paintFrame(RgbColor::LinearBlend(rgb1, rgb2, progress * 2));
   } else {
-    blankFrame();
+    paintFrame(RgbColor(0,0,0));
   }
-}
-
-void huehsb(HsbColor hsb1, HsbColor hsb2, int frames, int times) {
-  // linear transition between hsb1 ro hsb2 color around the HSB wheel during "frames" frames and repeated "times" times
-  HsbColor hsb;
-  if(frame >= frames*times) { //if already played all frames & times, it means the effect ended
-    frame=0; 
-  } else {
-    float progress=(frame % frames)/(frames-1.0);  
-    //transition from rgb1 to rgb2
-    hsb=HsbColor(hsb1.H+(hsb2.H-hsb1.H)*progress,hsb1.S+(hsb2.S-hsb1.S)*progress,hsb1.B+(hsb2.B-hsb1.B)*progress);
-    paintFrame(RgbColor(hsb));
-    frame++;
-  };
-  return;
 }
 
 void animHueHsb(HsbColor hsb1, HsbColor hsb2, float progress) {
   // Linear blend on HSB colors then convert to RGB
   paintFrame(RgbColor(HsbColor::LinearBlend<NeoHueBlendShortestDistance>(hsb1, hsb2, progress)));
-}
-
-void huehsl(HslColor hsl1, HslColor hsl2, int frames, int times) {
-  // linear transition between hsb1 ro hsb2 color around the HSL wheel during "frames" frames and repeated "times" times
-  // Hue 0-360 gives the color, Saturation 0-100, Lightness: 0=black, 50= solid color, 100=white
-  HslColor hsl;
-  if(frame >= frames*times) { //if already played all frames & times, it means the effect ended
-    frame=0;  
-  } else {
-    float progress=(frame % frames)/(frames-1.0);  
-    //transition from rgb1 to rgb2
-    hsl=HslColor(hsl1.H+(hsl2.H-hsl1.H)*progress,hsl1.S+(hsl2.S-hsl1.S)*progress,hsl1.L+(hsl2.L-hsl1.L)*progress);
-    paintFrame(RgbColor(hsl));
-    frame++;
-  };
-  return;
 }
 
 void animHueHsl(HslColor hsl1, HslColor hsl2, float progress) {
@@ -1234,16 +1082,6 @@ bool updateWarmUp(byte v1, byte v2, byte v3) {
   byte parameters[3] = {v1, v2, v3};
   ed.updateInitColor(parameters);
   return true;
-}
-
-void blank() {
-  play="blank";
-  streaming=false;
-  playingSprite=false;
-  playingEffect=true;
-  frame=0;
-  offset=0;
-  playEffect();
 }
 
 void restart() {  
@@ -1323,7 +1161,7 @@ void LoopAnimUpdate(const AnimationParam& param) {
         
         indexSprite = (indexSprite + 1) % spriteFrames; // increment and wrap
         if (indexSprite == 0) {
-          spriteCounter++;
+          effectCounter++;
         }
       } else {
         if (DEBUG_MODE) {
@@ -1704,9 +1542,9 @@ bool handleSprite() { //SPRITE rgb255,0,0 rgb0,0,255 t10 f30 s1 x4 y3 a60
   blankFrame();
   playingSprite = true;
   indexSprite = 0;
-  spriteCounter = 0;
+  effectCounter = 0;
   uint32_t spriteAnimationTime = 16.66667 * double(timePerAnimation) / double(spriteFrames);   // ms per 1/60 sec * (seconds per animation) / (Frames per animation)
-  spriteRepeat = timeRepeats;
+  times = timeRepeats;
   animations.StartAnimation(0, spriteAnimationTime, LoopAnimUpdate);
   return true;
 }
@@ -1718,103 +1556,6 @@ bool compareArrays(uint8_t arr1[], uint8_t arr2[], uint32_t len) {
     }
   }
   return true;
-}
-
-void spriteSetup() {  //Loads default sprite object
-  free(imageBuffer);
-  delete spriteSheet;
-  spriteCounter = 0;
-  imageBuffer = (uint8_t *)malloc(3 * 16 * 20);  //Bytes per Pixel * Pixels * Frames
-  uint8_t tempBuffer[] = {  // (16 x 20) GRB in Hexadecimal
-    //{<-------------->} ONE PIXEL    
-       0x00, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // 1st frame
-       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // ONE FRAME BLOCK
-       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // 
-       
-       0x00, 0x3f, 0x00, 0x00, 0xff, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // 2nd frame
-       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,     
-       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-       
-       0x00, 0x00, 0x00, 0x00, 0x3f, 0x00, 0x00, 0x7f,    0x00, 0x00, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, // 3rd frame
-       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,     
-       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-       
-       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x3f, 0x00, 0x00, 0x7f, 0x00, 0x00, // 4th frame
-       0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,     
-       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-       
-       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // 5th frame
-       0x3f, 0x00, 0x00, 0x7f, 0x00, 0x00, 0xff, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,     
-       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-       
-       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // 6th frame
-       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3f, 0x00,    0x00, 0x7f, 0x00, 0x00, 0xff, 0x00, 0x00, 0x00,     
-       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-       
-       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // 7th frame
-       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x3f, 0x00, 0x00, 0x7f,     
-       0x00, 0x00, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-       
-       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // 8th frame
-       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,     
-       0x00, 0x00, 0x3f, 0x00, 0x00, 0x7f, 0x00, 0x00,    0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-       
-       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // 9th frame
-       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,     
-       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x3f, 0x00, 0x00, 0xff, 0x00, 0x00, 0x00, 0x00,
-       
-       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // 10th frame
-       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,     
-       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0x00,
-       
-       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // 11th frame
-       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,     
-       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0x00,
-       
-       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // 12th frame
-       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,     
-       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0xff, 0x00, 0x00, 0x3f, 0x00,
-       
-       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // 13th frame
-       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,     
-       0x00, 0x00, 0x01, 0x00, 0x00, 0xff, 0x00, 0x00,    0x7e, 0x00, 0x00, 0x3e, 0x00, 0x00, 0x00, 0x00,
-       
-       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // 14th frame
-       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0xff,     
-       0x00, 0x00, 0x7e, 0x00, 0x00, 0x3e, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-       
-       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // 15th frame
-       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00,    0x00, 0xff, 0x00, 0x00, 0x7e, 0x00, 0x00, 0x3e,     
-       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-       
-       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // 16th frame
-       0x01, 0x00, 0x00, 0xff, 0x00, 0x00, 0x7e, 0x00,    0x00, 0x3e, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,     
-       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-       
-       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x01, 0x00, 0x00, 0xff, 0x00, 0x00, // 17th frame
-       0x7e, 0x00, 0x00, 0x3e, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,     
-       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-       
-       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff,    0x00, 0x00, 0x7f, 0x00, 0x00, 0x3e, 0x00, 0x00, // 18th frame
-       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,     
-       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-       
-       0x00, 0x00, 0x00, 0x00, 0xff, 0x00, 0x00, 0x3f,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // 19th frame
-       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,     
-       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-       
-       0x00, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // 20th frame
-       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,     
-       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 
-  };
-  for (int i = 0; i < 3*16*20; i++) {
-    imageBuffer[i] = tempBuffer[i];
-  }
-  indexSprite = 0;
-  spriteCounter = 0;
-  spriteFrames = 20;
-  spriteRepeat = 100;
-  spriteSheet = new NeoVerticalSpriteSheet<NeoBufferMethod<NeoGrbFeature>>(16, 20, 1, imageBuffer);  
 }
 
 // Examines the first 20 bytes of a udp packet to determine if it matches 'EnviralDesignPxlNode'
@@ -1905,15 +1646,6 @@ void udpUpdateFrame() {
     udp.endPacket();
   }
 
-  //measure total frame processing time
-  //framesMD[frameIndex].processingTime=micros()-framesMD[frameIndex].arrivedAt;
-  //frameIndex=(frameIndex+1) % framesToMonitor;
-
-
-  //framesMD[frameIndex].processingTime=micros()-framesMD[frameIndex].arrivedAt;
-  //if(frameIndex==oldestFrameIndex) oldestFrameIndex=(oldestFrameIndex+1) % framesToMonitor;
-  //frameNumber=(frameNumber+1) % frameLimit;
-
   pinMode(BUILTIN_LED, INPUT);
 }
 
@@ -1946,7 +1678,6 @@ void udpConfigDevice() {
     tempF.bytes[j] = packetBuffer[i++];
   }
   updateAmps(tempF.num);
-  //updateAmps((float)packetBuffer[i++] + ((float)packetBuffer[i++]/256.0));
   
   valBuf[0] = packetBuffer[i++];
   valBuf[1] = packetBuffer[i++];
@@ -2110,14 +1841,14 @@ void handleFileUpload() {
 
 void handleFileDelete() {
   if (server.args() == 0) {
-    return server.send(500, "text/plain", "BAD ARGS");
+    return server.send(500, "text/plain", F("BAD ARGS"));
   }
   String path = server.arg(0);
   if (path == "/") {
-    return server.send(500, "text/plain", "BAD PATH");
+    return server.send(500, "text/plain", F("BAD PATH"));
   }
   if (!SPIFFS.exists(path)) {
-    return server.send(404, "text/plain", "FileNotFound");
+    return server.send(404, "text/plain", F("FileNotFound"));
   }
   SPIFFS.remove(path);
   server.send(200, "text/plain", "");
@@ -2126,20 +1857,20 @@ void handleFileDelete() {
 
 void handleFileCreate() {
   if (server.args() == 0) {
-    return server.send(500, "text/plain", "BAD ARGS");
+    return server.send(500, "text/plain", F("BAD ARGS"));
   }
   String path = server.arg(0);
   if (path == "/") {
-    return server.send(500, "text/plain", "BAD PATH");
+    return server.send(500, "text/plain", F("BAD PATH"));
   }
   if (SPIFFS.exists(path)) {
-    return server.send(500, "text/plain", "FILE EXISTS");
+    return server.send(500, "text/plain", F("FILE EXISTS"));
   }
   File file = SPIFFS.open(path, "w");
   if (file) {
     file.close();
   } else {
-    return server.send(500, "text/plain", "CREATE FAILED");
+    return server.send(500, "text/plain", F("CREATE FAILED"));
   }
   server.send(200, "text/plain", "");
   path = String();
@@ -2147,7 +1878,7 @@ void handleFileCreate() {
 
 void handleFileList() {
   if (!server.hasArg("dir")) {
-    server.send(500, "text/plain", "BAD ARGS");
+    server.send(500, "text/plain", F("BAD ARGS"));
     return;
   }
 
