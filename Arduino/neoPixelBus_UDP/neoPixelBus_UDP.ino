@@ -24,6 +24,9 @@
 #define NOPACKET -1
 #define UDPID "EnviralDesignPxlNode"
 #define IDLENGTH 20
+#define UDP_MIN_FRAME_TIME 33333 // 33333 = 30 fps
+int opcode;
+bool minFrameTimeMet = true;
 
 #define min(a,b) ((a)<(b)?(a):(b))
 #define max(a,b) ((a)>(b)?(a):(b))
@@ -100,7 +103,7 @@ uint16_t spriteFrames = 20;
 uint8_t bytesPerPixel = 3;
 uint8_t *imageBuffer;
 uint16_t indexSprite;
-bool playingSprite = false;
+volatile bool playingSprite = false;
 String spritelastfile = "";
 uint8_t lastColorStart[3];
 uint8_t lastColorEnd[3];
@@ -176,11 +179,11 @@ HslColor hsl1=HslColor(0,0,0);
 HslColor hsl2=HslColor(0,0,0);
 
 uint32_t times=1;
-bool playingEffect = false;
+volatile bool playingEffect = false;
 uint32_t effectCounter=0;
 uint32_t frames=1;
 uint32_t offset=0;
-volatile int frame=0;
+//volatile int frame=0;
 
 WiFiManager wifiManager;
 
@@ -389,7 +392,7 @@ void setup() {
     if (DEBUG_MODE) {
       Serial.print(F("Received play POST "));Serial.println(server.arg("plain"));
     }
-    udp.stop();
+    udp.stop();udp.flush();
     // <effect> [RGB[r1],[g1],[b1]] [RGB[r],[g2],[b2]] [T<times>] [F<frames>]
     // Executes "effect" with the specified parameters 
     // Ej: blink rgb255,0,0 rgb0,0,0 t10 f10
@@ -398,12 +401,14 @@ void setup() {
     streaming=false; //quit streaming mode and enter effects playing mode into main loop
     playingSprite = false;  //Stop playing the sprite animation
     playingEffect=true;
-    frame=0; //means it needs to fetch command from play sequence
     offset=0; // start parsing new line from leftmost character
     effectCounter = 0; // Reset the animation repeater
     animations.StopAll();
     //Serial.println("POST request");
     parseEffect();
+    if (DEBUG_MODE) {
+      Serial.println(F("Effect parsed"));
+    }
     server.send(200,"text/plain", "OK");
     });
 
@@ -418,7 +423,7 @@ void setup() {
     bool initD = false;
 
     // Need to stop udp in case we're streaming.
-    udp.stop();
+    udp.stop();udp.flush();
     
     if (server.hasArg("plain") == false) {
       server.send(422, "application/json", F("{\"error\":\"HTTP BODY MISSING\"}"));
@@ -610,17 +615,19 @@ void setup() {
 }
 
 void loop() { //main program loop
-
-  if (DEBUG_MODE && playingEffect) {
-    Serial.print(F("Playing "));Serial.println(play);
-  }
   
-  int opcode = parseUdpPoll();
+  if (streaming && !playingSprite && !playingEffect) {
+    opcode = parseUdpPoll();
+  } else {
+    while(udp.parsePacket()); // Throw away udp packets
+    opcode = NOPACKET;
+  }  
+  
   // opcodes between 0 and 99 represent the chunkID
-  if (opcode <= CHUNKIDMAX && opcode >= CHUNKIDMIN && streaming && !playingSprite && !playingEffect) {
+  if (opcode <= CHUNKIDMAX && opcode >= CHUNKIDMIN) {
     playStreaming(opcode);
     
-  } else if (opcode == UPDATEFRAME && streaming && !playingSprite && !playingEffect) {
+  } else if (opcode == UPDATEFRAME) {
     udpUpdateFrame();
     
   } else if (opcode == CONFIG) {
@@ -646,6 +653,9 @@ void loop() { //main program loop
     
   // Streaming but nothing received check timeout
   } else if (streaming && lastStreamingFrame!=0 && millis()-lastStreamingFrame>STREAMING_TIMEOUT*1000) {
+      if (DEBUG_MODE) {
+        Serial.println(F("Streaming timeout"));
+      }
       blankFrame();
       lastStreamingFrame=0;
   }
@@ -832,13 +842,15 @@ void parseEffect() {
     command=getCommand(line);  //Parse all parameters
     if (command.equals("SPRITE")) {
       if (!handleSprite()) {
+        Serial.println(F("Sprite command aborted"));
+        effectCounter = 0;
         times = 0;
+        Serial.flush();
+        return;
       }
-      frame = 1;
       return;
     } else if (command.equals("BLANK")) {
       blankFrame();
-      frame = 1;
       times = 0;
       return;
     }
@@ -885,15 +897,20 @@ void parseEffect() {
     if (DEBUG_MODE) {
       Serial.println("command:" + command + " rgb1:" + rgb1.R+","+rgb1.G+","+rgb1.B + " rgb2:" + rgb2.R+","+rgb2.G+","+rgb2.B + " duration(frames):" + frames + " repetitions:" + times);
     }
-  }  
-
-  // Animator determines which animation to run other than blank
-  frame = 1;
-
+  }
 }
 
 void playStreaming(int chunkID) {
-  //take initial time //MDB
+  
+  // New frame incoming check time
+  if (chunkID == 0 && arrivedAt + UDP_MIN_FRAME_TIME < micros()) {
+    minFrameTimeMet = true;
+  }
+  
+  if (!minFrameTimeMet) {
+    return;
+  }
+  
   arrivedAt=micros();
   
   if (PACKETDROP_DEBUG_MODE) { // If Debug mode is on print some stuff
@@ -953,8 +970,6 @@ void playStreaming(int chunkID) {
   framesMD[frameIndex].adjustedPower=0;
   framesMD[frameIndex].processingTime=micros()-framesMD[frameIndex].arrivedAt;
   frameIndex=(frameIndex +1) % framesToMonitor;
-  //packetSize=0; // implicit frame 0 will have packetSize == 0  MDBx
-  arrivedAt=micros();
 
   if (PACKETDROP_DEBUG_MODE) { // If Debug mode is on print some stuff
     Serial.println(F("--end of packet and stuff--"));
@@ -1119,7 +1134,7 @@ void startUDP() {
   if (DEBUG_MODE) {
     Serial.println(F("Starting UDP"));
   }
-  udp.stop();
+  udp.stop();udp.flush();
   delay(100);
   udp.begin(udpPort);
 }
@@ -1194,7 +1209,6 @@ void LoopAnimUpdate(const AnimationParam& param) {
 
 }
 
-// Frames = 10, cStart = [0,0,0] cEnd = [255,255,255] cAdjust = [0 + 255-0/10 * f]
 // BiLinear Blend: 
 //  Upper Left: cStart 
 //  Lower Right: cEnd
@@ -1203,10 +1217,16 @@ bool loadSpriteFile(File f, uint8_t cStartIn[], uint8_t cEndIn[]) {
 
   // Read the headers in the file
   uint8_t tbuf[4];
+
+  if (f.size() < 4) {
+    Serial.println(F("File too small"));
+    return false;
+  }
+  
   f.read(tbuf, 4);
 
   // Header1 holds num of pixels in sprite frame
-  spritePixels = tbuf[0] * 256 + tbuf[1];      
+  spritePixels = tbuf[0] * 256 + tbuf[1];
 
   // Header2 holds num of frames in sprite file
   spriteFrames = tbuf[2] * 256 + tbuf[3];
@@ -1223,8 +1243,16 @@ bool loadSpriteFile(File f, uint8_t cStartIn[], uint8_t cEndIn[]) {
   }
   uint8_t rgb[bytesPerPixel];
 
-  if (bytesPerPixel * spritePixels * spriteFrames > MAX_SPRITESIZE) {
+  unsigned long fileSize = 4 + (bytesPerPixel * spritePixels * spriteFrames);
+
+  if (fileSize > MAX_SPRITESIZE) {
     Serial.println(F("SpriteFile exceeds maximum allowed"));
+    return false;
+  }
+
+  // Check if file is of correct size
+  if (f.size() < fileSize) {
+    Serial.println(F("File too small"));
     return false;
   }
   
@@ -1516,6 +1544,7 @@ bool handleSprite() { //SPRITE rgb255,0,0 rgb0,0,255 t10 f30 s1 x4 y3 a60
   }
   // If same file loaded before just replay sprite unless color transition changed
   if (filename != spritelastfile || !compareArrays(colorStart, lastColorStart, bytesPerPixel) || !compareArrays(colorEnd, lastColorEnd, bytesPerPixel)) {
+    spritelastfile = ""; // Reset last file
     File f = SPIFFS.open(filename, "r");
     if (!f) {
       Serial.println(F("file open failed"));
@@ -1528,6 +1557,7 @@ bool handleSprite() { //SPRITE rgb255,0,0 rgb0,0,255 t10 f30 s1 x4 y3 a60
     }
     if (!loadSpriteFile(f, colorStart, colorEnd)) {
       Serial.println(F("Failed to convert bitmap into memory"));
+      Serial.flush();
       f.close();
       return false;
     }
@@ -1561,9 +1591,7 @@ bool compareArrays(uint8_t arr1[], uint8_t arr2[], uint32_t len) {
 // Examines the first 20 bytes of a udp packet to determine if it matches 'EnviralDesignPxlNode'
 // Returns the opcode
 int parseUdpPoll() {
-  if (playingEffect) {
-    return NOPACKET;
-  }
+
   int packetSize = udp.parsePacket();
   
   if (!packetSize) {
@@ -1589,9 +1617,15 @@ int parseUdpPoll() {
 }
 
 void udpUpdateFrame() {
-//  framesMD[frameIndex].frame=frameNumber;
-//  framesMD[frameIndex].part=chunkID;
-//  framesMD[frameIndex].arrivedAt=arrivedAt;
+
+  if (!minFrameTimeMet) {
+    milliAmpsCounter = 0; // reset the milliAmpsCounter for the next frame.
+    return;
+  }
+
+  //Reset time boolean
+  minFrameTimeMet = false;
+
   if (PACKETDROP_DEBUG_MODE) {
     Serial.println("Updating Frame");
   }
