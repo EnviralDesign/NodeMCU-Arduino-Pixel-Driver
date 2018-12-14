@@ -20,6 +20,8 @@
 #define INIT_COLOR 24
 #define NAME_ADDRESS 29
 
+#define MAX_NAME_LENGTH 64
+
 typedef union
 {
     float num;

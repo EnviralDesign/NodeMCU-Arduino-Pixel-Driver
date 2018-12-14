@@ -84,7 +84,7 @@ void EnviralDesign::updatemaPerPixel(uint16_t val) {
 }
 
 void EnviralDesign::updateDeviceName(String val) {
-    if (val.length() >= 64) return;
+    if (val.length() >= MAX_NAME_LENGTH) return;
     EEPROM.begin(512);
     updateMode(NAME_ADDRESS);
     writeStringToAddress(NAME_ADDRESS, val);
