@@ -20,7 +20,10 @@ EnviralDesign::EnviralDesign(uint16_t *pixelsPerStrip, uint16_t *chunkSize, uint
 }
 
 void EnviralDesign::start() {
+
+#ifdef ESP8266
     EEPROM.begin(512);
+#endif
     if (isWriteMode(PIXELS_PER_STRIP_ADDRESS)) {
         uint16_t val = readIntFromAddress(PIXELS_PER_STRIP_ADDRESS);
         if (val <= 1500) *this->pix = val;
@@ -50,7 +53,9 @@ void EnviralDesign::start() {
         this->iC[1] = EEPROM.read(INIT_COLOR + 3);
         this->iC[2] = EEPROM.read(INIT_COLOR + 4);
     }
+#ifdef ESP8266
     EEPROM.end();
+#endif
 }
 
 void EnviralDesign::update(uint16_t pixelsPerStrip, uint16_t chunkSize, uint16_t maPerPixel) {
@@ -60,56 +65,82 @@ void EnviralDesign::update(uint16_t pixelsPerStrip, uint16_t chunkSize, uint16_t
 }
 
 void EnviralDesign::updatePixelsPerStrip(uint16_t val) {
+#ifdef ESP8266
     EEPROM.begin(512);
+#endif
     updateMode(PIXELS_PER_STRIP_ADDRESS);
     writeIntToAddress(PIXELS_PER_STRIP_ADDRESS, val);
     if (val <= 1500) *this->pix = val;
+#ifdef ESP8266
     EEPROM.end();
+#endif
 }
 
 void EnviralDesign::updateChunkSize(uint16_t val) {
+#ifdef ESP8266
     EEPROM.begin(512);
+#endif
     updateMode(CHUNK_SIZE_ADDRESS);
     writeIntToAddress(CHUNK_SIZE_ADDRESS, val);
     *this->ch = val;
+#ifdef ESP8266
     EEPROM.end();
+#endif
 }
 
 void EnviralDesign::updatemaPerPixel(uint16_t val) {
+#ifdef ESP8266
     EEPROM.begin(512);
+#endif
     updateMode(MA_PER_PIXEL_ADDRESS);
     writeIntToAddress(MA_PER_PIXEL_ADDRESS, val);
     *this->maP = val;
+#ifdef ESP8266
     EEPROM.end();
+#endif
 }
 
 void EnviralDesign::updateDeviceName(String val) {
     if (val.length() >= MAX_NAME_LENGTH) return;
+#ifdef ESP8266
     EEPROM.begin(512);
+#endif
     updateMode(NAME_ADDRESS);
     writeStringToAddress(NAME_ADDRESS, val);
     *this->dName = val;
+#ifdef ESP8266
     EEPROM.end();
+#endif
 }
 
 void EnviralDesign::updateAmps(float val) {
+#ifdef ESP8266
     EEPROM.begin(512);
+#endif
     updateMode(AMPS);
     writeFloatToAddress(AMPS, val);
     *this->a = val;
+#ifdef ESP8266
     EEPROM.end();
+#endif
 }
 
 void EnviralDesign::updateUDPport(uint16_t val) {
+#ifdef ESP8266
     EEPROM.begin(512);
+#endif
     updateMode(UDP_PORT);
     writeIntToAddress(UDP_PORT, val);
     *this->uP = val;
+#ifdef ESP8266
     EEPROM.end();
+#endif
 }
 
 void EnviralDesign::updateInitColor(byte val[]) {
+#ifdef ESP8266
     EEPROM.begin(512);
+#endif
     updateMode(INIT_COLOR);
     EEPROM.write(INIT_COLOR + 2, val[0]);
     EEPROM.write(INIT_COLOR + 3, val[1]);
@@ -117,7 +148,9 @@ void EnviralDesign::updateInitColor(byte val[]) {
     this->iC[0] = val[0];
     this->iC[1] = val[1];
     this->iC[2] = val[2];
+#ifdef ESP8266
     EEPROM.end();
+#endif
 }
 
 void EnviralDesign::writeIntToAddress(uint16_t address, uint16_t value) {
@@ -216,20 +249,28 @@ void EnviralDesign::setCompile(String cotime) {
   combinetime.num += String(sec).toInt() / 2;
   uint16_t storedtime = getStoredTime(COMPILE_TIME);
   if (combinetime.num != storedtime) {
+#ifdef ESP8266
     EEPROM.begin(512);
+#endif
     EEPROM.write(COMPILE_TIME, combinetime.bytes[0]);
     EEPROM.write(COMPILE_TIME + 1, combinetime.bytes[1]);
+#ifdef ESP8266
     EEPROM.end();
+#endif
   }
   
 }
 
 uint16_t EnviralDesign::getStoredTime(uint16_t address) {
+#ifdef ESP8266
     EEPROM.begin(512);
+#endif
     UINT16_ARRAY storedtime;
     storedtime.bytes[0] = EEPROM.read(address);
     storedtime.bytes[1] = EEPROM.read(address + 1);
+#ifdef ESP8266
     EEPROM.end();
+#endif
     return storedtime.num;
 }
 // EOF

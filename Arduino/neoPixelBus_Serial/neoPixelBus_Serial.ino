@@ -12,8 +12,6 @@
 #define POLLREPLY 201
 #define CONFIG 202
 #define NOPACKET -1
-#define UDPID "EnviralDesignPxlNode"
-#define IDLENGTH 20
 #define STREAMING_MIN_FRAME_TIME 33333 // 33333 = 30 fps
 #define VARIABLES_LENGTH 15 // sum of bytes for user variables. 2 (pixelsPerStrip) + 2 (chunkSize) + 2 (udpPort) + 4 (ampLimit) + 2 (maPerPixel) + 3 (WarmUpColor)
 int opcode;
@@ -21,6 +19,18 @@ bool minFrameTimeMet = true;
 
 #define min(a,b) ((a)<(b)?(a):(b))
 #define max(a,b) ((a)>(b)?(a):(b))
+
+// Stream packet protocol
+#define startMarker 254
+#define endMarker 255
+#define specialByte 253
+#define SERIAL_TIMEOUT 200 // wait for next byte in stream when decoding a high byte
+
+uint16_t serialBytesRecvd = 0;
+uint16_t serialRecvCount = 0;
+bool serialInProgress = false;
+bool serialAllReceived = false;
+byte * packetBuffer;
 
 ///////////////////// USER DEFINED VARIABLES START HERE /////////////////////////////
 // NOTICE: these startup settings, especially pertaining to number of pixels and starting color
@@ -58,11 +68,10 @@ EnviralDesign ed(&pixelsPerStrip, &chunkSize, &mAPerPixel, &deviceName, &amps, &
 #define PACKETDROP_DEBUG_MODE 0
 
 //#define pixelPin D4  // make sure to set this to the correct pin, ignored for UartDriven branch
-const uint8_t PixelPin = 2;
-NeoPixelBrightnessBus<NeoGrbFeature, NeoEsp8266Dma800KbpsMethod> *strip;
+const uint8_t PixelPin = 7;
+NeoPixelBrightnessBus<NeoGrbFeature, Neo800KbpsMethod> *strip;
 NeoGamma<NeoGammaTableMethod> colorGamma;
 
-byte * packetBuffer;
 RgbColor * ledDataBuffer;
 byte r;
 byte g;
@@ -79,18 +88,13 @@ uint32_t milliAmpsCounter = 0;
 byte millisMultiplier = 0;
 
 // Reply buffer, for now hardcoded but this might encompass useful data like dropped packets etc.
-byte ReplyBuffer[IDLENGTH + 1 + MAX_NAME_LENGTH + VARIABLES_LENGTH] = {0};
+byte ReplyBuffer[1 + MAX_NAME_LENGTH + VARIABLES_LENGTH] = {0};
 byte counterHolder = 0;
 
-long blankTime;
-long processingTime;
-long arrivedAt;
-long lastStreamingFrame=0;
+unsigned long arrivedAt;
+unsigned long lastStreamingFrame=0;
 
 volatile boolean streaming=true;
-
-uint32_t frames=1;
-uint32_t offset=0;
 
 void setup() {
   
@@ -116,26 +120,27 @@ void setup() {
   // Set milliamps value
   milliAmpsLimit = amps * 1000;
 
-  // Initial full black strip push and init.
-  blankTime=micros();
+  pinMode(LED_BUILTIN, OUTPUT);
+  digitalWrite(LED_BUILTIN, LOW);
 
 }
 
 void loop() { //main program loop  
-  opcode = parseStreamingPoll();
+  getSerialData();
+  opcode = parseSerialPoll();
   
   // opcodes between 0 and 99 represent the chunkID
   if (opcode <= CHUNKIDMAX && opcode >= CHUNKIDMIN) {
     playStreaming(opcode);
     
   } else if (opcode == UPDATEFRAME) {
-    streamingUpdateFrame();
+    serialUpdateFrame();
     
   } else if (opcode == CONFIG) {
-    streamingConfigDevice();
+    serialConfigDevice();
     
   } else if (opcode == POLL) {
-    streamingSendPollReply();
+    serialSendPollReply();
     
   } else if (opcode == POLLREPLY) {
     //POLLREPLY safe to ignore    
@@ -146,6 +151,37 @@ void loop() { //main program loop
       }
       blankFrame();
       lastStreamingFrame=0;
+  }
+}
+
+void getSerialData() {
+  if (Serial.available() > 0) {
+
+    byte x = Serial.read();
+    
+    if (x == startMarker) {
+    
+      serialBytesRecvd = 0;
+      serialInProgress = true;
+    
+    } else if (x == endMarker) {
+      
+      serialInProgress = false;
+      serialAllReceived = true;
+    
+    } else if (serialInProgress) {
+    
+      if (x == specialByte) {
+        unsigned long startTime = millis();
+        while(millis() - startTime < SERIAL_TIMEOUT) { // To decode the highbyte
+          if (Serial.available() > 0) {
+            x += Serial.read();
+            break;
+          }
+        }
+      }
+      packetBuffer[serialBytesRecvd++] = x;
+    }    
   }
 }
 
@@ -226,9 +262,8 @@ void playStreaming(int chunkID) {
 
   // loop through our recently received packet, and assign the corresponding
   // RGB values to their respective places in the strip.
-  //if(action<=MAX_ACTION_BYTE) { //check the ation byte is within limits
   uint16_t led=0;
-  for (uint16_t i = IDLENGTH + 1; i < (IDLENGTH + chunkSize*3);) {
+  for (uint16_t i = 1; i < chunkSize*3;) {
 
     r = packetBuffer[i++];
     g = packetBuffer[i++];
@@ -260,8 +295,7 @@ bool updatePixels(int val) {
     return false;
   } else {
     ed.updatePixelsPerStrip(val);
-    // Force sprite to reload file
-    spritelastfile = "";
+
     return true;
   }
 }
@@ -273,8 +307,7 @@ bool updateChunk(int val) {
 
 bool updateMA(int val) {
   ed.updatemaPerPixel(val);
-  // Force sprite to reload file
-  spritelastfile = "";
+
   return true;
 }
 
@@ -285,8 +318,7 @@ bool updateName(String val) {
 
 bool updateAmps(float val) {
   ed.updateAmps(val);
-  // Force sprite to reload file
-  spritelastfile = "";
+  
   // Update milliamps value
   milliAmpsLimit = amps * 1000;
   return true;
@@ -314,7 +346,7 @@ void startNeoPixelBus() {
   if (ledDataBuffer) {
     free(ledDataBuffer);
   }
-  strip = new NeoPixelBrightnessBus<NeoGrbFeature, NeoEsp8266Dma800KbpsMethod>(pixelsPerStrip, PixelPin);
+  strip = new NeoPixelBrightnessBus<NeoGrbFeature, Neo800KbpsMethod>(pixelsPerStrip, PixelPin);
   ledDataBuffer = (RgbColor *)malloc(pixelsPerStrip);
   
   strip->Begin();
@@ -322,10 +354,10 @@ void startNeoPixelBus() {
 
 void setPacketSize() {
   if (packetBuffer) free(packetBuffer);
-  // Max packet size is the IDLENGTH + OPCODE + ( RGB[chunksize][3] OR Update size )
+  // Max packet size is the OPCODE + ( RGB[chunksize][3] OR Update size )
   // Update size MAX_NAME_LENGTH + sizeof(PixelsPerStrip, ChunkSize, UdpPort, AmpsLimit, MaPerPixel, WarmUpColor)
-  udpPacketSize = ( IDLENGTH + 1 + max( (chunkSize*3), (MAX_NAME_LENGTH  + VARIABLES_LENGTH) ) );
-  packetBuffer = (byte *)malloc(udpPacketSize);//buffer to hold incoming and outgoing packets
+  uint16_t packetSize = ( 1 + max( (chunkSize*3), (MAX_NAME_LENGTH  + VARIABLES_LENGTH) ) );
+  packetBuffer = (byte *)malloc(packetSize);//buffer to hold incoming packets
 }
 
 void initDisplay() {  
@@ -340,44 +372,19 @@ void initDisplay() {
   };
 }
 
-bool compareArrays(uint8_t arr1[], uint8_t arr2[], uint32_t len) {
-  for (uint32_t i = 0; i < len; i++) {
-    if (arr1[i] != arr2[i]) {
-      return false;
-    }
-  }
-  return true;
-}
-
-// Examines the first 20 bytes of a udp packet to determine if it matches 'EnviralDesignPxlNode'
 // Returns the opcode
-int parseUdpPoll() {
+int parseSerialPoll() {
 
-  int packetSize = udp.parsePacket();
-  
-  if (!packetSize) {
+  if (!serialAllReceived) {
     return NOPACKET;
+  } else {
+    serialAllReceived = false;
   }
-
-  udp.read(packetBuffer, udpPacketSize);
-
-  int i = 0;
   
-  for (; i < IDLENGTH; i++) {
-    if (packetBuffer[i] != UDPID[i]) {
-      if (DEBUG_MODE) {
-        Serial.println(F("Mismatch"));
-      }
-      return NOPACKET;
-    }
-  } 
-  if (PACKETDROP_DEBUG_MODE) {
-    Serial.print(F("Matched ")); Serial.println(packetBuffer[i]);
-  }
-  return packetBuffer[i];
+  return packetBuffer[0];
 }
 
-void udpUpdateFrame() {
+void serialUpdateFrame() {
 
   if (!minFrameTimeMet) {
     milliAmpsCounter = 0; // reset the milliAmpsCounter for the next frame.
@@ -390,17 +397,14 @@ void udpUpdateFrame() {
   if (PACKETDROP_DEBUG_MODE) {
     Serial.println("Updating Frame");
   }
-  pinMode(BUILTIN_LED, OUTPUT);
+  digitalWrite(LED_BUILTIN, HIGH);
 
   // this math gets our sum total of r/g/b vals down to milliamps (~60mA per pixel)
   milliAmpsCounter /= 13;
-  //framesMD[frameIndex].power=milliAmpsCounter;
-
+  
   // because the Darken function uses a value from 0-255 this next line maths it into the right range and type.
   millisMultiplier = 255 - (byte)( constrain( ((float)milliAmpsLimit / (float)milliAmpsCounter), 0, 1 ) * 256);
   millisMultiplier = map(millisMultiplier, 0, 255, 255, 0); // inverse the multiplier to work with new brightness control method
-  // Collect data  MDB
-  //framesMD[frameIndex].adjustedPower=millisMultiplier;
 
   if (PACKETDROP_DEBUG_MODE) { // If Debug mode is on print some stuff
     Serial.println(F("Trying to update leds..."));
@@ -408,12 +412,10 @@ void udpUpdateFrame() {
     Serial.println( millisMultiplier );
   }
 
-
   // We already applied our r/g/b values to the strip, but we haven't updated it yet.
   // Since we needed the sum total of r/g/b values to calculate brightness, we
   // can loop through all the values again now that we have the right numbers
-  // and scale brightness if we need to.
-  
+  // and scale brightness if we need to.  
   if(millisMultiplier!=255) { //dim LEDs only if required
     strip->SetBrightness(millisMultiplier); // this new brightness control method was added to lib recently, affects entire strip at once.
   }
@@ -431,22 +433,21 @@ void udpUpdateFrame() {
     ReplyBuffer[sizeof(ReplyBuffer) - 1] = 2;
     ReplyBuffer[0] = counterHolder;
     counterHolder += 1;
-    // write out the response packet back to sender!
-    udp.beginPacket(udp.remoteIP(), UDP_PORT_OUT);
+
     // clear the response buffer string.
     for (byte i = 0; i < sizeof(ReplyBuffer); i++) {
-      udp.write(ReplyBuffer[i]);
+      Serial.write(ReplyBuffer[i]);
       ReplyBuffer[i] = 0;
     }
-    udp.endPacket();
+    Serial.println();
   }
 
-  pinMode(BUILTIN_LED, INPUT);
+  digitalWrite(LED_BUILTIN, LOW);
 }
 
-void udpConfigDevice() {
-  // Set packetbuffer index past the ID and OpCode bytes
-  int i = IDLENGTH + 1;
+void serialConfigDevice() {
+  // Set packetbuffer index past the OpCode byte
+  int i = 1;
   // Get the device name and save it to a buffer
   char nameBuf[MAX_NAME_LENGTH];
   for (int j = 0; j < MAX_NAME_LENGTH; j++) {
@@ -482,20 +483,34 @@ void udpConfigDevice() {
   valBuf[1] = packetBuffer[i++];
   valBuf[2] = packetBuffer[i++];
   updateWarmUp(valBuf[0], valBuf[1], valBuf[2]);
+
+  //Initializes NeoPixelBus
+  startNeoPixelBus();
+  
+  //Sets the size of the Serial packets
+  setPacketSize();
+
+  //Animate from dark to initial color in 3 seconds on module power up
+  initDisplay();
+
+  // Set milliamps value
+  milliAmpsLimit = amps * 1000;
   
 }
  
-void udpSendPollReply() {
+void serialSendPollReply() {
   int i = 0;
-  for (; i < IDLENGTH; i++) {
-    ReplyBuffer[i] = UDPID[i];
-  }
+
   // Set opcode to POLLREPLY
   ReplyBuffer[i++] = POLLREPLY;
 
   //Copy device name to reply buffer
   for (int j = 0; j < MAX_NAME_LENGTH; j++) {
-    ReplyBuffer[i++] = deviceName[j];
+    if (j < deviceName.length()) {
+      ReplyBuffer[i++] = deviceName[j];
+    } else {
+      ReplyBuffer[i++] = '\0';
+    }
   }
   
   //Copy pixelsPerStrip value
@@ -525,21 +540,11 @@ void udpSendPollReply() {
   ReplyBuffer[i++] = InitColor[0];
   ReplyBuffer[i++] = InitColor[1];
   ReplyBuffer[i++] = InitColor[2];
-  ReplyBuffer[i] = '\0';
   if (PACKETDROP_DEBUG_MODE) {
-    Serial.print(F("Sending message to "));Serial.println(udp.remoteIP());
-    Serial.println(F("Contents: "));
+    Serial.println(F("Replying..."));
     for (i = 0; i < sizeof(ReplyBuffer); i++) {
-      Serial.print(ReplyBuffer[i]);Serial.print(F(":"));
-      Serial.print((char)ReplyBuffer[i]);Serial.print(F(" "));
+      Serial.write(ReplyBuffer[i]);Serial.print(F(":"));
     }
     Serial.println(F("EndReplyBuffer"));
   }
-  udp.beginPacket(udp.remoteIP(), UDP_PORT_OUT);
-  // clear the response buffer string.
-  for (i = 0; i < sizeof(ReplyBuffer); i++) {
-    udp.write(ReplyBuffer[i]);
-    ReplyBuffer[i] = 0;
-  }
-  udp.endPacket();
 }
