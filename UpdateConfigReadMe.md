@@ -1,20 +1,5 @@
-  - **192.168.1.xxx/mcu_config**
-    - This command allows users to update pixels per strip, chunk size, and ma per pixel.
-Command message's are structured like this:
-- [ command ]
-- [ values ]*
 
-Some actual examples - any one of the lines below are a complete command:
-```
-device_name MyPixelNode
-pixels_per_strip 80
-chunk_size 40
-ma_per_pixel 120
-udp_streaming_port 3000
-amps_limit 5.0
-warmup_color 80 10 44
-```
-Alternatively, the command takes in a JSON object. It may include one, some, or all fields. Here is an example
+Alternatively, the command takes in a JSON object via POST. It may include one, some, or all fields. Here is an example
 ```
 {
     "device_name": "PxlNode-8266",

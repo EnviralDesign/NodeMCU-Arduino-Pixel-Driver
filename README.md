@@ -7,37 +7,42 @@
 
 **PxlNode-8266** is a flexible lightweight wifi based pixel controller designed around the **ESP-8266** development board.
 
-The PxlNode is currently designed to work with a specific led setup:
-- Currently only supports neopixel aka ws2811 / ws2812b etc style led.
-- Configured for 1 strip output, using the nodeMCU's hardware acellerated DMA output for fast refresh rates.
+The PxlNode is designed to work within the following parameters.
+- Neopixel aka ws2811 / ws2812b etc style led.
+- 1 strip output, using the nodeMCU's hardware accelerated DMA output for fast refresh rates.
 
-What makes this library special is it's innate support for 2 very different modes of operation, as well as a few other key features.
+Here are some of the main features you can read more about in the wiki.
 
-- **Streaming mode**
-  - Uses a simple and straight forward UDP based protocol for streaming pixel data from a source device.
-  - Current tests have achieved a consistent 60 fps @ 512 pixels.
+- **UDP Pixel Streaming protocol**
+  - Uses a simple and straight forward UDP based protocol(more down below) for streaming raw pixel data from a client device.
   - **TouchDesigner/Streaming/StreamingExample_SIMPLE.toe**
 
 
-- **Command Mode**
+- **POST based Lighting Command protocol**
   - Uses a very lightweight messaging protocol utilizing http requests with POST / GET.
   - Allows for IOT friendly, minimal programming to control the nodeMCU / leds with very little strain on networks etc.
+  - Think Philips Hue style control of lights.
   - **TouchDesigner/Command/scanning_and_commands_SIMPLE.toe**
 
 
-- **Client side Wi-fi Scan feature**
-  - I'll talk more about this more down below, but through python, or Node-Red, or our Android app(in development) you'll be able to scan your wifi for connected PxlNode's and then use the collected data to communicate with multiple nodes.
+- **Client side UDP Network Scan**
+  - Using a UDP broadcast with a specific byte array you can scan a network for all living PxlNode devices that are currently connected to the same network.
 
 
-- **GET / POST http request based communication**
+- **GET, POST, HTTP EndPoints**
+  - **192.168.1.xxx**
+    - HTTP: This home page displays memory use and pin status.
   - **192.168.1.xxx/survey**
-    - this command returns a visual graph that shows SSID's and their respective signal strength in the eyes of that particular PxlNode.
-  - **192.168.1.xxx/mcu_info**
-    - This command returns configuration information about your PxlNode. This is what other software that is scanning for PxlNodes should retrieve. The resulting data is easy to parse: `name:testMCU,ip:192.168.1.228,ssid:CampoGrande_24,port:2390,packetsize:76` more will be added to this return string as time goes on.
-  - **192.168.1.xxx/play**
-    - This is the address you send non streaming effect commands to.
+    - HTTP: This command returns a visual graph that shows SSID's and their respective signal strength in the eyes of that particular PxlNode.
   - **192.168.1.xxx/getframes**
-    - this command returns a list of several seconds of received frame diagnostic data. Useful to query this right after a stutter, or visual glitch to see where the problem might lie.
+    - HTTP: This command returns a list of several seconds of received frame diagnostic data. Useful to query this right after a stutter, or visual glitch to see where the problem might lie.
+  - **192.168.1.xxx/edit**
+    - HTTP: This page is where files may be uploaded, intended primarily for uploading / managing sprites.
+  - **192.168.1.xxx/mcu_json**
+    - GET: When this endpoint receives a GET request it returns information about the device in a JSON formatted string.
+    - POST: When the endpoint receives a POST request, it is assumed that the message is a JSON string and will be parsed expecting certain variables.
+  - **192.168.1.xxx/play**
+    - POST: When the endpoint receives a POST command at this address it's expecting a command structured one of several ways. This can trigger a simple hue shift, or a sprite effect to play.
 
 
 - **Dynamic brightness limitation**
@@ -46,12 +51,13 @@ What makes this library special is it's innate support for 2 very different mode
 
 
 - **Client Platforms in active development**:
-  - **Touch Designer** (*for power users - pc and mac*)
+  - **TouchDesigner** (*for power users - pc and mac*)
     - You would use this for show control, streaming, generating large amounts of pixel mapped data, etc.
-  - **Node-Red on Raspberry Pi** (*IOT, also good for shared web based access*)
-    - This is great for making web based access to scan and control lights. Very useful as well if you want an install that a lot of people can control with out needing to install software or apps etc.
-  - **Android app** (*for casual users, personal projects, and fully wireless setups*)
-    - This is probably what most people will use for casual purposes. Does not support streaming YET, development for command mode is first and nearing completion then phase 2 will include support for streaming / pixel mapping animations etc.
+    - Python examples exist within the TouchDesigner examples for those of you wanting to see the raw code, just open the .TOE files and look around.
+  - **Android** (*for casual users, personal projects, and fully wireless setups*)
+    - This is probably what most people will use for casual purposes. Does not support streaming.
+    - Can scan for and configure PxlNode devices easily with this app.
+    - Development nearing completion. Will be available on Google Play later in 2o19.
 
 
 
@@ -92,46 +98,10 @@ Currently this platform only supports 1 strip of pixels connected to the hardwar
 
 
 ## Programming your nodeMCU:
+[TODO] Document
+At this point you can program the default Arduino code straight to the nodeMCU with out any changes, and configure everything you should need to change, via the wifi portal.
 
-There are a few variables in the arduino code that are not yet exposed to the user through the wifi configuration portal. This is on my todo list and will be done soon but for now you'll need to configure a few things manually, before uploading your code.
-
-```
-///////////////////// USER DEFINED VARIABLES START HERE /////////////////////////////
-
-String tmpName = "testMCU";
-
-// number of physical pixels in the strip.
-#define PIXELS_PER_STRIP 100
-
-// This needs to be evenly divisible by PIXLES_PER_STRIP.
-// This represents how large our packets are that we send from our software source IN TERMS OF LEDS.
-#define CHUNK_SIZE 171
-
-//maximum numbers of chunks per frame in order to validate we do not receive a wrong index when there are communciation errors
-#define MAX_ACTION_BYTE 4
-
-// Dynamically limit brightness in terms of amperage.
-#define AMPS 3
-
-// UDP port to receive streaming data on.
-#define UDP_PORT 2390
-
-///////////////////// USER DEFINED VARIABLES END HERE /////////////////////////////
-```
-
-- **tmpName**
-  - Set this to a relevant name that makes sense for the nodeMCU. IE. "Kitchen", "Studio", "EntryWay" etc. It will show up in scan requests to help identify what that physical nodeMCU that IP address is attached to.
-- **PIXELS_PER_STRIP**
-  - Pretty straight forward, just enter in the number of pixels being driven by the nodeMCU. This variable is extremely important to several things, including the calculation of the dynamic brightness limitation.
-- **CHUNK_SIZE**
-  - CHUNK_SIZE is a little less intuitive - this setting pertains entirely to streaming mode. Ideally you'll want to strike a happy medium between as large as possible and modular and memorable. If you have a bunch of nodeMCU's driving 400 pixels each for instance, consider using a chunk size of 100. Going too much higher than 150-170 may result in flickering and weird results on the leds - I have not entirely figured out why but sticking with smaller numbers seems to be better.
-- **MAX_ACTION_BYTE**
-  - This variable will be automated in future versions. For now, set this number to the number of chunks that it will take to make up your entire strip.
-  For example if you have a string of 100 pixels, and you set your chunk size to 25, you'd want to set MAX_ACTION_BYTE==4. (100 pixels / 25)
-- **AMPS**
-  - Assumes you know your voltage / current situation. If you step up or down your voltage for different led types outside of the scope of this document be sure to specify amps @ the voltage you're operating at. This info is usually on the power supply or battery etc.
-- **UDP_PORT**
-  - This port is what the nodeMCU assumes it will receive streaming pixel data through. Not usually necessary to change unless you have conflicts.
+[TODO] Document Easy Installer process
 
 
 
