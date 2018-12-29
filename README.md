@@ -11,7 +11,7 @@ The PxlNode is designed to work within the following parameters.
 - Neopixel aka ws2811 / ws2812b etc style led.
 - 1 strip output, using the nodeMCU's hardware accelerated DMA output for fast refresh rates.
 
-Here are some of the main features you can read more about in the wiki.
+Here are some of the main features. Read more about them in the wiki.
 
 - **UDP Pixel Streaming protocol**
   - Uses a simple and straight forward UDP based protocol(more down below) for streaming raw pixel data from a client device.
@@ -34,6 +34,10 @@ Here are some of the main features you can read more about in the wiki.
     - HTTP: This home page displays memory use and pin status.
   - **192.168.1.xxx/survey**
     - HTTP: This command returns a visual graph that shows SSID's and their respective signal strength in the eyes of that particular PxlNode.
+  - **192.168.1.xxx/getstatus**
+    - HTTP: [TODO]
+  - **192.168.1.xxx/mcu_info**
+    - HTTP: [TODO]
   - **192.168.1.xxx/getframes**
     - HTTP: This command returns a list of several seconds of received frame diagnostic data. Useful to query this right after a stutter, or visual glitch to see where the problem might lie.
   - **192.168.1.xxx/edit**
@@ -70,30 +74,19 @@ Here are some of the main features you can read more about in the wiki.
 3. When a nodeMCU is plugged in the computer should recognize it in device manager as a serial device on **COM 3**
 4. You'll want to install some libraries. ultimately these will need to be included in your file:
 ```
+#include <ArduinoJson.h>
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
 #include <WiFiUdp.h>
 #include <NeoPixelBrightnessBus.h>
+#include <NeoPixelAnimator.h>
 #include <WiFiManager.h>
 #include <DoubleResetDetector.h>
+#include <ESP8266mDNS.h>
+#include <FS.h>
+#include <EnviralDesign.h>
 ```
-
-
-
-## Touch Designer Setup:
-
-1. Register on [Derivative.ca]
-2. [Download the installer] for the latest 099 x64 build: https://www.derivative.ca/099/Downloads/experimental.asp
-  - *I'm using the experimental 099 version and that's what these files are saved in.*
-3. Open Touch Designer, and perform the 1 time activation / login:
-![alt tag](http://www.enviral-design.com/downloads/loginToTouch.jpg)
-
-
-
-## Wiring:
-
-Currently this platform only supports 1 strip of pixels connected to the hardware accelerated pin of the nodeMCU. **GPIO3 aka RXD0** seen below - fourth from the bottom, on the right.
-![alt tag](https://pradeepsinghblog.files.wordpress.com/2016/04/nodemcu_pins.png?w=616)
+**EnviralDesign.h** is a library you'll find in this repository. You'll want to copy it to
 
 
 
@@ -104,6 +97,21 @@ At this point you can program the default Arduino code straight to the nodeMCU w
 [TODO] Document Easy Installer process
 
 
+## Touch Designer Setup:
+
+1. Register on [Derivative.ca]
+2. [Download the installer] for the latest 099 x64 build: https://www.derivative.ca/099/Downloads/experimental.asp
+  - *I'm using the experimental 099 version and that's what these files are saved in.*
+3. Open Touch Designer, and perform the 1 time activation / login.
+
+
+
+## Wiring:
+
+When using the esp8266, this platform only supports 1 strip of pixels connected to the hardware accelerated pin of the nodeMCU. **GPIO3 aka RXD0** seen below - fourth from the bottom, on the right.
+![alt tag](https://pradeepsinghblog.files.wordpress.com/2016/04/nodemcu_pins.png?w=616)
+
+
 
 ## Connecting to a wireless network:
 
@@ -111,7 +119,7 @@ The first thing this software will want to do is connect to a wifi network. Thes
 
 1. Attempt to connect to the ssid/password stored in memory.
 2. If it can't connect after a short period of time, it will go into "configuration" mode broadcasting it's own SSID named **Enviral**
-  - You can also trigger "configuration" mode by double pressing the reset button on the NodeMCU. (left of the usb port, as shown above)
+  - You can also trigger "configuration" mode by double pressing the reset button if using the esp8266. (left of the usb port, as shown above)
 
 If you're running this for the first time, you'll probably be greeted with the ssid **Enviral** either way:
 ![alt tag](https://www.enviral-design.com/blog/wp-content/uploads/2017/11/wifiscan_enviral.jpg)
@@ -121,21 +129,9 @@ Once configured and saved, your nodeMCU will reset on its own, and "Enviral" wil
 
 ## Streaming Pixel Data to the PxlNode:
 
-There are 2 variables at this moment that you'll want to keep track of from your arduino code.
-
-- PIXELS_PER_STRIP
-- CHUNK_SIZE
-
-Assuming you have those handy, you can stream data via UDP to a nodeMCU.
-For now, I will simply point those who are curious to the fully working examples built in touch designer.
-
-Touch Designer is a visual node-based programming environment so the examples should be clear enough that if you're comfortable with coding, you'll be able to piece together how it works from what's there. That said, I will be updating this readme with more complete documentation on how the streaming protocol is built.
-
-You'll see a place to enter the two variables mentioned above - reccomend starting with the SIMPLE example.
+To get started streaming, the easiest way to test your nodeMCU PxlNode is to run the included file below (you'll need to install TouchDesigner) and manually entering the IP address of your PxlNode and configure a few other params and you should see some moving colors showing up.
 
 - **TouchDesigner\Streaming\StreamingExample_SIMPLE.toe**
-- **TouchDesigner\Streaming\StreamingExample_ADVANCED.toe**
-  - Main difference in the advanced version, several things are automated and has support for many nodeMCU's.
 
 
 
@@ -165,8 +161,6 @@ Once you have a command put together as a simple string, you'll send that to you
 
 The address you send the POST command to would look like this:
 `192.168.1.xxx/play`
-
-Currently all effects are constant colors applied to all leds in the array. Phase 2 of programming for the PxlNode will include other effect types that are spatially mapped!
 
 
 
@@ -198,4 +192,4 @@ https://www.enviral-design.com
 
 
 [Derivative.ca]: <http://www.derivative.ca/Login/RegisterForm.asp>
-[Download the installer]: https://www.derivative.ca/088/Downloads/
+[Download the installer]: <https://www.derivative.ca/088/Downloads/>
