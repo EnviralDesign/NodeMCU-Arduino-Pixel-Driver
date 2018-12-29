@@ -67,7 +67,7 @@ Here are some of the main features. Read more about them in the wiki.
 
 ## Arduino IDE Setup:
 
-1. Install Arduino IDE 1.8.2.
+1. Install Arduino IDE 1.8.3.
  - You can probably use later versions just fine but may need to troubleshoot any issues that come up between versions / libraries etc.
 2. Go to boards manager, and install **esp8266** version **2.3.0** by *ESP8266 Community*
  - Probably good idea to use the latest version here.
