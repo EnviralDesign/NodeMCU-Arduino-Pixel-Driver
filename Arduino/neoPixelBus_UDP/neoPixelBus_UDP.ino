@@ -1,18 +1,40 @@
 // include some libraries
 #include <ArduinoJson.h>
+
+#ifdef ESP8266
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
+#include <ESP8266mDNS.h>
+#include <DoubleResetDetector.h>
+#define DRD_TIMEOUT 10
+#define DRD_ADDRESS 0
+DoubleResetDetector drd(DRD_TIMEOUT, DRD_ADDRESS);
+//WiFiServer instance to query the module for status or to send commands to change some module settings //MDB
+ESP8266WebServer server(80);
+
+#else
+#include <WiFi.h>
+#include <WebServer.h>
+#include <ESPmDNS.h>
+//WiFiServer instance to query the module for status or to send commands to change some module settings //MDB
+WebServer server(80);
+#endif
+
 #include <WiFiUdp.h>
 #include <NeoPixelBrightnessBus.h>
 #include <NeoPixelAnimator.h>
-#include <WiFiManager.h>
-#include <DoubleResetDetector.h>
-#include <ESP8266mDNS.h>
-#include <FS.h>
-#include <EnviralDesign.h>
 
-#define DRD_TIMEOUT 10
-#define DRD_ADDRESS 0
+#include <DNSServer.h>
+#include <WiFiManager.h>
+
+#include <FS.h>
+
+#ifdef ESP32
+#include <SPIFFS.h>
+#define FORMAT_SPIFFS_IF_FAILED true
+#endif
+
+#include <EnviralDesign.h>
 
 // UDP Poll Opcodes
 #define CHUNKIDMIN 0
@@ -24,14 +46,30 @@
 #define NOPACKET -1
 #define UDPID "EnviralDesignPxlNode"
 #define IDLENGTH 20
-#define UDP_MIN_FRAME_TIME 33333 // 33333 = 30 fps
+
 int opcode;
 bool minFrameTimeMet = true;
 
-#define min(a,b) ((a)<(b)?(a):(b))
-#define max(a,b) ((a)>(b)?(a):(b))
+// Common strings to save memory
+const char successStr[] PROGMEM = {"SUCCESS!"};
+const char failStr[] PROGMEM = {"FAILURE!"};
+const char pixStripJSON[] PROGMEM = {"pixels_per_strip"};
+const char devNameJSON[] PROGMEM = {"device_name"};
+const char udpPortJSON[] PROGMEM = {"udp_streaming_port"};
+const char chunkSzJSON[] PROGMEM = {"chunk_size"};
+const char maPixelJSON[] PROGMEM = {"ma_per_pixel"};
+const char ampJSON[] PROGMEM = {"amps_limit"};
+const char initColJSON[] PROGMEM = {"warmup_color"};
+const char frameTimeJSON[] PROGMEM = {"frame_time"};
+const char textHTML[] PROGMEM = {"text/html"};
+const char textJSON[] PROGMEM = {"text/json"};
+const char textPlain[] PROGMEM = {"text/plain"};
+const char appJSON[] PROGMEM = {"application/json"};
+const char plain[] PROGMEM = {"plain"};
 
-DoubleResetDetector drd(DRD_TIMEOUT, DRD_ADDRESS);
+//#define min(a,b) ((a)<(b)?(a):(b))
+//#define max(a,b) ((a)>(b)?(a):(b))
+
 
 ///////////////////// USER DEFINED VARIABLES START HERE /////////////////////////////
 // NOTICE: these startup settings, especially pertaining to number of pixels and starting color
@@ -55,6 +93,8 @@ uint16_t udpPort = 2390;
 
 //Set here the inital RGB color to show on module power up
 byte InitColor[] = {200, 75, 10};
+
+uint16_t udpMinFrameTime = 17; // 33 = 30 fps, 22 = 45 fps, 17 = 60fps
 
 ///////////////////// USER DEFINED VARIABLES END HERE /////////////////////////////
 
@@ -88,8 +128,12 @@ File fsUploadFile;
 #define PACKETDROP_DEBUG_MODE 0
 
 //#define pixelPin D4  // make sure to set this to the correct pin, ignored for UartDriven branch
-const uint8_t PixelPin = 2;
-NeoPixelBrightnessBus<NeoGrbFeature, NeoEsp8266Dma800KbpsMethod> *strip;
+const uint8_t PixelPin = 21;
+//#ifdef ESP8266
+NeoPixelBrightnessBus<NeoGrbFeature, Neo800KbpsMethod> *strip;
+//#else
+//NeoPixelBrightnessBus<NeoGrbFeature, Neo800KbpsMethod> *strip;
+//#endif
 NeoGamma<NeoGammaTableMethod> colorGamma;
 NeoPixelAnimator animations(1); //Number of animations
 NeoPixelAnimator effectAnimations(1);
@@ -132,41 +176,29 @@ byte millisMultiplier = 0;
 // A UDP instance to let us send and receive packets over UDP
 WiFiUDP udp;
 
-//WiFiServer instance to query the module for status or to send commands to change some module settings //MDB
-ESP8266WebServer server(80);
-
 // Reply buffer, for now hardcoded but this might encompass useful data like dropped packets etc.
 byte ReplyBuffer[IDLENGTH + 1 + MAX_NAME_LENGTH + 16] = {0};
 byte counterHolder = 0;
 
 //last number of frames to monitor monitoring //MDB
 int const framesToMonitor = 120; //monitor last 2 seconds
-int frameNumber=0;
+
 int frameLimit=6000;
 int frameIndex= 0;
-int oldestFrameIndex=0;
-byte part=0;
 
 struct framesMetaData {
           unsigned int frame;
           int part;
-          long arrivedAt;
+          unsigned long arrivedAt;
           int packetSize;
           int power; 
           int adjustedPower; 
-          long processingTime;} framesMD[framesToMonitor];
+          unsigned long processingTime;} framesMD[framesToMonitor];
 
-long blankTime;
-long processingTime;
-long arrivedAt;
-long lastStreamingFrame=0;
+unsigned long arrivedAt;
+unsigned long lastStreamingFrame=0;
 
 volatile boolean streaming=true;
-
-// Default Settings
-String settings="mAPerPixel 60 Amps 4 name Enviral topology RA 10 10"; //mAPerPixel and Amps no longer used here
-
-String topology;
 
 // variables to keep status during effects play
 String play="";
@@ -181,18 +213,18 @@ HslColor hsl2=HslColor(0,0,0);
 uint32_t times=1;
 volatile bool playingEffect = false;
 uint32_t effectCounter=0;
-uint32_t frames=1;
+
 uint32_t offset=0;
-//volatile int frame=0;
 
 WiFiManager wifiManager;
 
 void setup() {
+#ifdef ESP8266
   if (drd.detectDoubleReset()) { //if user double clicks reset button, then reset wifisetting
     wifiManager.resetSettings();
     drd.stop();
   }
- 
+#endif
   ////////////////// A whole bunch of initialization stuff that prints no matter what.
   Serial.begin(115200);
   if (DEBUG_MODE) {
@@ -229,7 +261,11 @@ void setup() {
     Serial.println(WiFi.localIP());
   }
   //SPIFFS Setup access file system
+#ifdef ESP8266
   if (!SPIFFS.begin()) {
+#else
+  if (!SPIFFS.begin(FORMAT_SPIFFS_IF_FAILED)) {
+#endif
     Serial.println(F("Failed to mount file system"));
     while(1) {
       delay(1000);
@@ -242,7 +278,11 @@ void setup() {
   startUDP();
   if (DEBUG_MODE) {
     Serial.print(F("Local port: "));
+#ifdef ESP8266
     Serial.println(udp.localPort());
+#else
+    Serial.println(udpPort);
+#endif
     Serial.print(F("Expected packagesize:"));
     Serial.println(udpPacketSize);
   
@@ -253,106 +293,126 @@ void setup() {
     Serial.print(F("Update: "));Serial.println(UPDATEFRAME);
     Serial.println(F(""));
   }
-  // Initial full black strip push and init.
-  blankTime=micros();
-
-  blankTime=micros()-blankTime;
 
   for(int i=0 ; i<framesToMonitor ; i++)  //blank all frames metadata
      framesMD[i].frame=0;
 
   // here we place all the different web services definition
 
-  server.on("/survey", HTTP_GET, []() {
+  server.on(F("/survey"), HTTP_GET, []() {
     // build Javascript code to draw SVG wifi graph
     IPAddress local_ip=WiFi.localIP();
-    String rt="<!doctype html><html><body>";
-    rt+="Connected to:"+WiFi.SSID()+"<br>IP address:"+String(local_ip[0]) + "." + String(local_ip[1]) + "." + String(local_ip[2]) + "." + String(local_ip[3]);
-    rt+="<br>port:"+String(udpPort)+"<br>Expected packet size:"+String(udpPacketSize);
-    rt+="<br><h2>WiFi monitoring</h2><svg id='svg' width='800' height='800'></svg><script type='text/javascript'>";
-    rt+="var svgns = 'http://www.w3.org/2000/svg';var svg = document.getElementById('svg');";
-    rt+="var color=0,colors = ['red','orange','blue','green','purple','cyan','magenta','yellow'];";
-    rt+="line(80,400,640,400,'','');for(i=-1;i<=13;i++) {label='Ch'+i;if (i<1 || i>11 ) label='';line(i*40+120,400,i*40+120,80,null,label);}";
-    rt+="for(i=-90;i<=-20;i+=10) {label=''+i+'dBm';line(80,-i*4,640,-i*4,label,null);}";
+    String rt=F("<!doctype html><html><body>");
+    rt+=F("Connected to:");
+    rt+=WiFi.SSID();
+    rt+=F("<br>IP address:");
+    rt+=String(local_ip[0]);
+    rt+=F(".");
+    rt+=String(local_ip[1]);
+    rt+=F(".");
+    rt+=String(local_ip[2]);
+    rt+=F(".");
+    rt+=String(local_ip[3]);
+    rt+=F("<br>port:");
+    rt+=String(udpPort);
+    rt+=F("<br>Expected packet size:");
+    rt+=String(udpPacketSize);
+    rt+=F("<br><h2>WiFi monitoring</h2><svg id='svg' width='800' height='800'></svg><script type='text/javascript'>");
+    rt+=F("var svgns = 'http://www.w3.org/2000/svg';var svg = document.getElementById('svg');");
+    rt+=F("var color=0,colors = ['red','orange','blue','green','purple','cyan','magenta','yellow'];");
+    rt+=F("line(80,400,640,400,'','');for(i=-1;i<=13;i++) {label='Ch'+i;if (i<1 || i>11 ) label='';line(i*40+120,400,i*40+120,80,null,label);}");
+    rt+=F("for(i=-90;i<=-20;i+=10) {label=''+i+'dBm';line(80,-i*4,640,-i*4,label,null);}");
     rt+=getSSIDs();
-    rt+="function line(x1,y1,x2,y2,lleft,ldown) {var l=document.createElementNS(svgns,'line');l.setAttribute('stroke','black');";
-    rt+="l.setAttribute('x1', x1);l.setAttribute('y1', y1);l.setAttribute('x2', x2);l.setAttribute('y2', y2);svg.appendChild(l);";
-    rt+="var t=document.createElementNS(svgns,'text');t.textContent = ldown;t.setAttribute('x', x1-15);t.setAttribute('y', y1+20);svg.appendChild(t);";
-    rt+="var t=document.createElementNS(svgns,'text');t.textContent = lleft;t.setAttribute('x', x1-60);t.setAttribute('y', y1+5); svg.appendChild(t);}";
-    rt+="function channel(ch,db,ssid) {var p=document.createElementNS(svgns,'path');";
-    rt+="p.setAttribute('d', 'M'+((ch-2)*40+120)+' 400 l60 '+(-400-db*4)+' l40 0 L'+((ch+2)*40+120)+' 400');";
-    rt+="p.setAttribute('stroke',colors[color]);p.setAttribute('stroke-width',3);p.setAttribute('fill','none');svg.appendChild(p);";
-    rt+="var t=document.createElementNS(svgns,'text');t.setAttribute('stroke',colors[color]);t.textContent = ssid;";
-    rt+="t.setAttribute('x', ch*40-(ssid.length/2*8)+120);t.setAttribute('y', -db*4-5);svg.appendChild(t); color=(color+1) % colors.length;}";  
-    rt+="</script></body></html>";
-    server.send(200, "text/html", rt);
+    rt+=F("function line(x1,y1,x2,y2,lleft,ldown) {var l=document.createElementNS(svgns,'line');l.setAttribute('stroke','black');");
+    rt+=F("l.setAttribute('x1', x1);l.setAttribute('y1', y1);l.setAttribute('x2', x2);l.setAttribute('y2', y2);svg.appendChild(l);");
+    rt+=F("var t=document.createElementNS(svgns,'text');t.textContent = ldown;t.setAttribute('x', x1-15);t.setAttribute('y', y1+20);svg.appendChild(t);");
+    rt+=F("var t=document.createElementNS(svgns,'text');t.textContent = lleft;t.setAttribute('x', x1-60);t.setAttribute('y', y1+5); svg.appendChild(t);}");
+    rt+=F("function channel(ch,db,ssid) {var p=document.createElementNS(svgns,'path');");
+    rt+=F("p.setAttribute('d', 'M'+((ch-2)*40+120)+' 400 l60 '+(-400-db*4)+' l40 0 L'+((ch+2)*40+120)+' 400');");
+    rt+=F("p.setAttribute('stroke',colors[color]);p.setAttribute('stroke-width',3);p.setAttribute('fill','none');svg.appendChild(p);");
+    rt+=F("var t=document.createElementNS(svgns,'text');t.setAttribute('stroke',colors[color]);t.textContent = ssid;");
+    rt+=F("t.setAttribute('x', ch*40-(ssid.length/2*8)+120);t.setAttribute('y', -db*4-5);svg.appendChild(t); color=(color+1) % colors.length;}");
+    rt+=F("</script></body></html>");
+    server.send(200, textHTML, rt);
   });
 
-  server.on("/getstatus", HTTP_GET, []() {
+  server.on(F("/getstatus"), HTTP_GET, []() {
     // build Javascript code to draw SVG wifi graph
     IPAddress local_ip=WiFi.localIP();
-    String rt="<!doctype html><html><body>";
+    String rt=F("<!doctype html><html><body>");
     //rt+="Connected to:"+String(ssid)+"<br>IP address:"+String(local_ip[0]) + "." + String(local_ip[1]) + "." + String(local_ip[2]) + "." + String(local_ip[3]);
-    rt+="Connected to:"+WiFi.SSID()+"<br>IP address:"+String(local_ip[0]) + "." + String(local_ip[1]) + "." + String(local_ip[2]) + "." + String(local_ip[3]);
-    rt+="<br>port:"+String(udpPort)+"<br>Expected packet size:"+String(udpPacketSize);
-    rt+="</body></html>";
-    server.send(200, "text/html", rt);
+    rt += F("Connected to:");
+    rt += WiFi.SSID();
+    rt += F("<br>IP address:");
+    rt += String(local_ip[0]);
+    rt += F(".");
+    rt += String(local_ip[1]);
+    rt += F(".");
+    rt += String(local_ip[2]);
+    rt += F(".");
+    rt += String(local_ip[3]);
+    rt += F("<br>port:");
+    rt += String(udpPort);
+    rt += F("<br>Expected packet size:");
+    rt += String(udpPacketSize);
+    rt += F("</body></html>");
+    server.send(200, textHTML, rt);
   });
   
   
-  server.on("/mcu_info", HTTP_GET, []() {
-    // build javascript-like data
-    IPAddress local_ip=WiFi.localIP();
-    FSInfo fs_info;
+//  server.on(F("/mcu_info"), HTTP_GET, []() {
+//    // build javascript-like data
+//    IPAddress local_ip=WiFi.localIP();
+//
+//    String rt = "name:"+deviceName;
+//    rt += ",";
+//    rt += "ip:"+String(local_ip[0]) + "." + String(local_ip[1]) + "." + String(local_ip[2]) + "." + String(local_ip[3]);
+//    rt += ",";
+//    rt += "ssid:"+WiFi.SSID();
+//    rt += ",";
+//    rt += "port:"+String(udpPort);
+//    rt += ",";
+//    rt += "packetsize:"+String(udpPacketSize);
+//    server.send(200, textHTML, rt);
+//  });
 
-    String rt = "name:"+deviceName;
-    rt += ",";
-    rt += "ip:"+String(local_ip[0]) + "." + String(local_ip[1]) + "." + String(local_ip[2]) + "." + String(local_ip[3]);
-    rt += ",";
-    rt += "ssid:"+WiFi.SSID();
-    rt += ",";
-    rt += "port:"+String(udpPort);
-    rt += ",";
-    rt += "packetsize:"+String(udpPacketSize);
-    server.send(200, "text/html", rt);
-  });
-
-  server.on("/mcu_json", HTTP_GET, []() {
+  server.on(F("/mcu_json"), HTTP_GET, []() {
     // build json data
     IPAddress local_ip=WiFi.localIP();
     String rt;
-    FSInfo fs_info;
     StaticJsonBuffer<1000> jsonBuffer;
     JsonObject& root = jsonBuffer.createObject();
-    root["device_name"] = deviceName;
-    root["ip"] = String(local_ip[0]) + "." + String(local_ip[1]) + "." + String(local_ip[2]) + "." + String(local_ip[3]);
-    root["ssid"] = String(WiFi.SSID());
-    root["udp_streaming_port"] = udpPort;
-    root["packetsize"] = udpPacketSize;
-    root["chunk_size"] = chunkSize;
-    root["pixels_per_strip"] = pixelsPerStrip;
-    root["ma_per_pixel"] = mAPerPixel;
-    root["amps_limit"] = amps;
-    JsonArray& wcArr = root.createNestedArray("warmup_color");
+    root[devNameJSON] = deviceName;
+    root[F("ip")] = String(local_ip[0]) + "." + String(local_ip[1]) + "." + String(local_ip[2]) + "." + String(local_ip[3]);
+    root[F("ssid")] = String(WiFi.SSID());
+    root[udpPortJSON] = udpPort;
+    root[F("packetsize")] = udpPacketSize;
+    root[chunkSzJSON] = chunkSize;
+    root[pixStripJSON] = pixelsPerStrip;
+    root[maPixelJSON] = mAPerPixel;
+    root[ampJSON] = amps;
+    JsonArray& wcArr = root.createNestedArray(initColJSON);
     wcArr.add(InitColor[0]);
     wcArr.add(InitColor[1]);
     wcArr.add(InitColor[2]);
-    if (SPIFFS.info(fs_info)) {
-      
-      root["totalBytes"] = fs_info.totalBytes;
-      root["usedBytes"] = fs_info.usedBytes;
-      root["blockSize"] = fs_info.blockSize;
-      root["pageSize"] = fs_info.pageSize;
-      root["maxOpenFiles"] = fs_info.maxOpenFiles;
-      root["maxPathLength"] = fs_info.maxPathLength;
+#ifdef ESP8266
+    FSInfo fs_info;
+    if (SPIFFS.info(fs_info)) {      
+      root[F("totalBytes")] = fs_info.totalBytes;
+      root[F("usedBytes")] = fs_info.usedBytes;
+      root[F("blockSize")] = fs_info.blockSize;
+      root[F("pageSize")] = fs_info.pageSize;
+      root[F("maxOpenFiles")] = fs_info.maxOpenFiles;
+      root[F("maxPathLength")] = fs_info.maxPathLength;
     }
+#endif
     root.printTo(rt);
-    server.send(200, "application/json", rt);
+    server.send(200, appJSON, rt);
   });
 
-  server.on("/getframes", HTTP_GET, []() {
-    String rt="<html><body><table>";
-    rt+="<tr style=\"border:1px solid black\"><th>Frame<br>#</th><th>Action<br>byte</td><th>Arrived At<br>[µS]</th><th>Packet Size<br>[bytes]</th><th>Power<br>[mA]</th><th>Power<br>Adjustment</th><th>Packet CPU<br>time [µS]</th><th>Frame CPU<br>time [µS]</th></tr>";
+  server.on(F("/getframes"), HTTP_GET, []() {
+    String rt=F("<html><body><table>");
+    rt+=F("<tr style=\"border:1px solid black\"><th>Frame<br>#</th><th>Action<br>byte</td><th>Arrived At<br>[ÂµS]</th><th>Packet Size<br>[bytes]</th><th>Power<br>[mA]</th><th>Power<br>Adjustment</th><th>Packet CPU<br>time [ÂµS]</th><th>Frame CPU<br>time [ÂµS]</th></tr>");
     long acum=0;
     long lastFrame=0;
     boolean grey=false;
@@ -363,41 +423,57 @@ void setup() {
           lastFrame=framesMD[i].frame;
         };
         if(grey)
-          rt += "<tr align=\"center\" bgcolor=\"lightgrey\">";
+          rt += F("<tr align=\"center\" bgcolor=\"lightgrey\">");
         else 
-          rt += "<tr align=\"center\">";
-        rt += "<td>"+String(framesMD[i].frame)+"</td>";
-        rt += "<td>"+String(framesMD[i].part)+"</td>";
-        rt += "<td>"+String(framesMD[i].arrivedAt)+"</td>"; 
-        rt += "<td>"+StringZ(framesMD[i].packetSize)+"</td>";
-        rt += "<td>"+StringZ(framesMD[i].power)+"</td>";
-        rt += "<td>"+StringZ(framesMD[i].adjustedPower)+"</td>";
-        rt += "<td>"+StringZ(framesMD[i].processingTime)+"</td>";
+          rt += F("<tr align=\"center\">");
+        rt += F("<td>");
+        rt += String(framesMD[i].frame);
+        rt += F("</td>");
+        rt += F("<td>");
+        rt += String(framesMD[i].part);
+        rt += F("</td>");
+        rt += F("<td>");
+        rt += String(framesMD[i].arrivedAt);
+        rt += F("</td>"); 
+        rt += F("<td>");
+        rt += StringZ(framesMD[i].packetSize);
+        rt += F("</td>");
+        rt += F("<td>");
+        rt += StringZ(framesMD[i].power);
+        rt += F("</td>");
+        rt += F("<td>");
+        rt += StringZ(framesMD[i].adjustedPower);
+        rt += F("</td>");
+        rt += F("<td>");
+        rt += StringZ(framesMD[i].processingTime);
+        rt += F("</td>");
         if(framesMD[i].part==1) acum = framesMD[i].processingTime;
         if(framesMD[i].part>1)  acum = acum + framesMD[i].processingTime;
         if(framesMD[i].part==0)  {
-          rt+="<td>"+String(acum+framesMD[i].processingTime)+"</td>";
+          rt+=F("<td>");
+          rt+=String(acum+framesMD[i].processingTime);
+          rt+=F("</td>");
           acum=0;}
          else
-          rt+="<td></td>";
-         rt+="</tr>";
+          rt+=F("<td></td>");
+         rt+=F("</tr>");
        };
     };
-    rt+="</table></body></html>";
-    server.send(200, "text/html; charset=UTF-8", rt);
+    rt+=F("</table></body></html>");
+    server.send(200, F("text/html; charset=UTF-8"), rt);
   });
 
 
-  server.on("/play", HTTP_POST, []() {
+  server.on(F("/play"), HTTP_POST, []() {
     if (DEBUG_MODE) {
-      Serial.print(F("Received play POST "));Serial.println(server.arg("plain"));
+      Serial.print(F("Received play POST "));Serial.println(server.arg(plain));
     }
     udp.stop();udp.flush();
     // <effect> [RGB[r1],[g1],[b1]] [RGB[r],[g2],[b2]] [T<times>] [F<frames>]
     // Executes "effect" with the specified parameters 
     // Ej: blink rgb255,0,0 rgb0,0,0 t10 f10
     // Blinks red / black for 10 times showing each color during 10 frames.
-    play=server.arg("plain");  //retrieve body from HTTP POST request
+    play=server.arg(plain);  //retrieve body from HTTP POST request
     streaming=false; //quit streaming mode and enter effects playing mode into main loop
     playingSprite = false;  //Stop playing the sprite animation
     playingEffect=true;
@@ -409,12 +485,12 @@ void setup() {
     if (DEBUG_MODE) {
       Serial.println(F("Effect parsed"));
     }
-    server.send(200,"text/plain", "OK");
+    server.send(200,textPlain, F("OK"));
     });
 
-  server.on("/mcu_json", HTTP_POST, []() {
+  server.on(F("/mcu_json"), HTTP_POST, []() {
     String updateString, cmd;
-    StaticJsonBuffer<2000> jsonBuffer;    
+    StaticJsonBuffer<255> jsonBuffer;    
     char str[64];
     int val;
     float fval;
@@ -425,100 +501,101 @@ void setup() {
     // Need to stop udp in case we're streaming.
     udp.stop();udp.flush();
     
-    if (server.hasArg("plain") == false) {
-      server.send(422, "application/json", F("{\"error\":\"HTTP BODY MISSING\"}"));
+    if (server.hasArg(plain) == false) {
+      server.send(422, appJSON, F("{\"error\":\"HTTP BODY MISSING\"}"));
       udp.begin(udpPort);
       return;
     }
-    updateString = server.arg("plain");  //retrieve body from HTTP POST request
+    updateString = server.arg(plain);  //retrieve body from HTTP POST request
+#ifdef ESP8266
     drd.stop(); //Prevents WiFi wiping during resets
-    
-    JsonObject& input = jsonBuffer.parseObject(server.arg("plain"));
+#endif
+    JsonObject& input = jsonBuffer.parseObject(server.arg(plain));
     if (!input.success()) {     //Not a well formed json. Checking for regular command
       
       if (updateString.length() > 64) {
-        server.send(422, "application/json", F("{\"error\":\"COMMAND TOO LONG\"}"));
+        server.send(422, appJSON, F("{\"error\":\"COMMAND TOO LONG\"}"));
         udp.begin(udpPort);
         return;
       }
       
       updateString.toCharArray(str, 64);
       cmd = strtok(str, " ");
-      if (cmd.indexOf("pixels_per_strip") == 0) {
+      if (cmd.indexOf(pixStripJSON) == 0) {
         blankFrame();
         val = String(strtok(NULL, " ")).toInt();
         
         if (!updatePixels(val)) {
-          server.send(422, "application/json", F("{\"error\":\"PARAMETER OUT OF RANGE\",\"pixels_per_strip\":\"Failed\"}"));
+          server.send(422, appJSON, F("{\"error\":\"PARAMETER OUT OF RANGE\",\"pixels_per_strip\":\"Failed\"}"));
           udp.begin(udpPort);
           return;
         }
-        server.send(200,"application/json", F("{\"pixels_per_strip\":\"Success\"}"));
+        server.send(200,appJSON, F("{\"pixels_per_strip\":\"Success\"}"));
         startNeoPixelBus();
         initDisplay();
         
-      } else if (cmd.indexOf("chunk_size") == 0) {
+      } else if (cmd.indexOf(chunkSzJSON) == 0) {
         val = String(strtok(NULL, " ")).toInt();
         if (!updateChunk(val)) {
-          server.send(422,"application/json", F("{\"chunk_size\":\"Failure\"}"));
+          server.send(422,appJSON, F("{\"chunk_size\":\"Failure\"}"));
           udp.begin(udpPort);
           return;
         }
         setUdpPacketSize();
-        server.send(200,"application/json", F("{\"chunk_size\":\"Success\"}"));
+        server.send(200,appJSON, F("{\"chunk_size\":\"Success\"}"));
         
-      } else if (cmd.indexOf("ma_per_pixel") == 0) {
+      } else if (cmd.indexOf(maPixelJSON) == 0) {
         val = String(strtok(NULL, " ")).toInt();
         if (!updateMA(val)) {
-          server.send(422,"application/json", F("{\"ma_per_pixel\":\"Failure\"}"));
+          server.send(422,appJSON, F("{\"ma_per_pixel\":\"Failure\"}"));
           udp.begin(udpPort);
           return;
         }
         initDisplay();
-        server.send(200,"application/json", F("{\"ma_per_pixel\":\"Success\"}"));
+        server.send(200,appJSON, F("{\"ma_per_pixel\":\"Success\"}"));
         
-      } else if (cmd.indexOf("device_name") == 0) {
+      } else if (cmd.indexOf(devNameJSON) == 0) {
         if (!updateName(String(strtok(NULL, " ")))) {
-          server.send(422,"application/json", F("{\"device_name\":\"Failure\"}"));
+          server.send(422,appJSON, F("{\"device_name\":\"Failure\"}"));
           udp.begin(udpPort);
           return;
         }
-        server.send(200,"application/json", F("{\"device_name\":\"Success\"}"));
+        server.send(200,appJSON, F("{\"device_name\":\"Success\"}"));
         
-      } else if (cmd.indexOf("amps_limit") == 0) {
+      } else if (cmd.indexOf(ampJSON) == 0) {
         fval = String(strtok(NULL, " ")).toFloat();
         if (!updateAmps(val)) {
-          server.send(422,"application/json", F("{\"amps_limit\":\"Failure\"}"));
+          server.send(422,appJSON, F("{\"amps_limit\":\"Failure\"}"));
           udp.begin(udpPort);
           return;
         }
         initDisplay();
-        server.send(200,"application/json", F("{\"amps_limit\":\"Success\"}"));
+        server.send(200,appJSON, F("{\"amps_limit\":\"Success\"}"));
         
-      } else if (cmd.indexOf("udp_streaming_port") == 0) {
+      } else if (cmd.indexOf(udpPortJSON) == 0) {
         val = String(strtok(NULL, " ")).toInt();
         if (!updateUDP(val)) {
-          server.send(422,"application/json", F("{\"udp_streaming_port\":\"Failure\"}"));
+          server.send(422,appJSON, F("{\"udp_streaming_port\":\"Failure\"}"));
           udp.begin(udpPort);
           return;
         }
         startUDP();
-        server.send(200,"application/json", F("{\"udp_streaming_port\":\"Success\"}"));
+        server.send(200,appJSON, F("{\"udp_streaming_port\":\"Success\"}"));
         
-      } else if (cmd.indexOf("warmup_color") == 0) {
+      } else if (cmd.indexOf(initColJSON) == 0) {
         v1 = String(strtok(NULL, " ")).toInt();
         v2 = String(strtok(NULL, " ")).toInt();
         v3 = String(strtok(NULL, " ")).toInt();
         if (!updateWarmUp(v1, v2, v3)) {
-          server.send(422,"application/json", F("{\"warmup_color\":\"Failure\"}"));
+          server.send(422,appJSON, F("{\"warmup_color\":\"Failure\"}"));
           udp.begin(udpPort);
           return;         
         }
         initDisplay();
-        server.send(200,"application/json", F("{\"warmup_color\":\"Success\"}"));
+        server.send(200,appJSON, F("{\"warmup_color\":\"Success\"}"));
         
       } else {
-        server.send(422,"application/json", F("{\"error\":\"INVALID COMMAND\"}"));
+        server.send(422,appJSON, F("{\"error\":\"INVALID COMMAND\"}"));
       } 
       
     } else {  //JSON detected
@@ -526,45 +603,50 @@ void setup() {
 
       blankFrame();
 
-      if (input["pixels_per_strip"] != NULL) {
-        root["pixels_per_strip"] = (updatePixels(input["pixels_per_strip"]) ? "Success" : "Failed");
+      if (input[pixStripJSON] != NULL) {
+        root[pixStripJSON] = (updatePixels(input[pixStripJSON]) ? successStr : failStr);
         startNeoPixelBus();
         initD = true;
       }
       
-      if (input["chunk_size"] != NULL) {
-        root["chunk_size"] = (updateChunk(input["chunk_size"]) ? "Success" : "Failed");
+      if (input[chunkSzJSON] != NULL) {
+        root[chunkSzJSON] = (updateChunk(input[chunkSzJSON]) ? successStr : failStr);
         setUdpPacketSize();
       }
       
-      if (input["ma_per_pixel"] != NULL) {
-        root["ma_per_pixel"] = (updateMA(input["ma_per_pixel"]) ? "Success" : "Failed");
+      if (input[maPixelJSON] != NULL) {
+        root[maPixelJSON] = (updateMA(input[maPixelJSON]) ? successStr : failStr);
         initD = true;
       }
       
-      if (input["device_name"].success()) {
-        root["device_name"] = (updateName(String((const char*)input["device_name"])) ? "Success" : "Failed");
+      if (input[devNameJSON].success()) {
+        root[devNameJSON] = (updateName(String((const char*)input[devNameJSON])) ? successStr : failStr);
       }
       
-      if (input["amps_limit"].success()) {
-        root["amps_limit"] = (updateAmps(input["amps_limit"]) ? "Success" : "Failed");
+      if (input[ampJSON].success()) {
+        root[ampJSON] = (updateAmps(input[ampJSON]) ? successStr : failStr);
         
         initD = true;
       }
       
-      if (input["udp_streaming_port"] != NULL) {
-        root["udp_streaming_port"] = (updateUDP(input["udp_streaming_port"]) ? "Success" : "Failed");
+      if (input[udpPortJSON] != NULL) {
+        root[udpPortJSON] = (updateUDP(input[udpPortJSON]) ? successStr : failStr);
       }
       
-      if (input["warmup_color"] != NULL ) {
-        v1 = input["warmup_color"][0];
-        v2 = input["warmup_color"][1];
-        v3 = input["warmup_color"][2];
-        root["warmup_color"] = (updateWarmUp(v1, v2, v3) ? "Success" : "Failed");
+      if (input[initColJSON] != NULL ) {
+        v1 = input[initColJSON][0];
+        v2 = input[initColJSON][1];
+        v3 = input[initColJSON][2];
+        root[initColJSON] = (updateWarmUp(v1, v2, v3) ? successStr : failStr);
         initD = true;
       }
+
+      if (input[frameTimeJSON].success()) {
+        udpMinFrameTime = input[frameTimeJSON].as<uint16_t>();
+        root[frameTimeJSON] = successStr;
+      }
       root.printTo(rt);
-      server.send(200, "application/json", rt);
+      server.send(200, appJSON, rt);
       if (initD) initDisplay();
     }
 
@@ -574,28 +656,28 @@ void setup() {
   // **** FILE SERVER HTTP ENDPOINTS **** //
   //SERVER INIT
   //list directory
-  server.on("/list", HTTP_GET, handleFileList);
+  server.on(F("/list"), HTTP_GET, handleFileList);
   //load editor
-  server.on("/edit", HTTP_GET, []() {
+  server.on(F("/edit"), HTTP_GET, []() {
     if (!handleFileRead("/edit.htm")) {
-      server.send(404, "text/plain", "FileNotFound");
+      server.send(404, textPlain, F("FileNotFound"));
     }
   });
   //create file
-  server.on("/edit", HTTP_PUT, handleFileCreate);
+  server.on(F("/edit"), HTTP_PUT, handleFileCreate);
   //delete file
-  server.on("/edit", HTTP_DELETE, handleFileDelete);
+  server.on(F("/edit"), HTTP_DELETE, handleFileDelete);
   //first callback is called after the request has ended with all parsed arguments
   //second callback handles file uploads at that location
-  server.on("/edit", HTTP_POST, []() {
-    server.send(200, "text/plain", "");
+  server.on(F("/edit"), HTTP_POST, []() {
+    server.send(200, textPlain, "");
   }, handleFileUpload);
 
   //called when the url is not defined here
   //use it to load content from SPIFFS
   server.onNotFound([]() {
     if (!handleFileRead(server.uri())) {
-      server.send(404, "text/plain", "FileNotFound");
+      server.send(404, textPlain, F("FileNotFound"));
     }
   });
 
@@ -604,9 +686,11 @@ void setup() {
     String json = "{";
     json += "\"heap\":" + String(ESP.getFreeHeap());
     json += ", \"analog\":" + String(analogRead(A0));
+#ifdef ESP8266 //TODO figure out how to get GPIO status on ESP32
     json += ", \"gpio\":" + String((uint32_t)(((GPI | GPO) & 0xFFFF) | ((GP16I & 0x01) << 16)));
+#endif
     json += "}";
-    server.send(200, "text/json", json);
+    server.send(200, textJSON, json);
     json = String();
   });
   
@@ -889,7 +973,7 @@ void parseEffect() {
     if(HSLcolors>0) LastColor=hsl2;
 
     times=getTimes(params);
-    frames=getFrames(params);
+    uint32_t frames=getFrames(params);
     effectCounter = 0;
     uint32_t effectAnimationTime = 16.66667 * double(frames);   // ms per 1/60 sec * (seconds per animation)
 
@@ -901,17 +985,17 @@ void parseEffect() {
 }
 
 void playStreaming(int chunkID) {
-  
+#ifdef ESP8266
   // New frame incoming check time
-  if (chunkID == 0 && arrivedAt + UDP_MIN_FRAME_TIME < micros()) {
+  if (chunkID == 0 && arrivedAt + udpMinFrameTime < millis()) {
     minFrameTimeMet = true;
   }
   
   if (!minFrameTimeMet) {
     return;
   }
-  
-  arrivedAt=micros();
+#endif
+  arrivedAt=millis();
   
   if (PACKETDROP_DEBUG_MODE) { // If Debug mode is on print some stuff
     Serial.println(F("---Incoming---"));
@@ -920,7 +1004,6 @@ void playStreaming(int chunkID) {
 
   }
 
-  framesMD[frameIndex].frame=frameNumber;
   framesMD[frameIndex].part=chunkID;
   framesMD[frameIndex].arrivedAt=arrivedAt;
   
@@ -968,7 +1051,7 @@ void playStreaming(int chunkID) {
   framesMD[frameIndex].packetSize=0;
   framesMD[frameIndex].power=0;
   framesMD[frameIndex].adjustedPower=0;
-  framesMD[frameIndex].processingTime=micros()-framesMD[frameIndex].arrivedAt;
+  framesMD[frameIndex].processingTime=millis()-framesMD[frameIndex].arrivedAt;
   frameIndex=(frameIndex +1) % framesToMonitor;
 
   if (PACKETDROP_DEBUG_MODE) { // If Debug mode is on print some stuff
@@ -1099,12 +1182,6 @@ bool updateWarmUp(byte v1, byte v2, byte v3) {
   return true;
 }
 
-void restart() {  
-  Serial.println(F("Restarting..."));
-  delay(50);
-  WiFi.forceSleepBegin(); wdt_reset(); ESP.restart(); while(1)wdt_reset();
-}
-
 void startNeoPixelBus() {
   if (DEBUG_MODE) {
     Serial.println(F("Starting NeoPixelBus"));
@@ -1116,7 +1193,11 @@ void startNeoPixelBus() {
   if (ledDataBuffer) {
     free(ledDataBuffer);
   }
-  strip = new NeoPixelBrightnessBus<NeoGrbFeature, NeoEsp8266Dma800KbpsMethod>(pixelsPerStrip, PixelPin);
+//#ifdef ESP8266
+//  strip = new NeoPixelBrightnessBus<NeoGrbFeature, Neo800KbpsMethod> (pixelsPerStrip);
+//#else
+  strip = new NeoPixelBrightnessBus<NeoGrbFeature, Neo800KbpsMethod>(pixelsPerStrip, PixelPin);
+//#endif
   ledDataBuffer = (RgbColor *)malloc(pixelsPerStrip);
   
   strip->Begin();
@@ -1126,7 +1207,7 @@ void setUdpPacketSize() {
   if (packetBuffer) free(packetBuffer);
   //UDP max packet size is the UDP ID + OPCODE + ( RGB[chunksize][3] OR Update size )
   // Update size MAX_NAME_LENGTH + sizeof(PixelsPerStrip, ChunkSize, UdpPort, AmpsLimit, MaPerPixel, WarmUpColor)
-  udpPacketSize = ( IDLENGTH + 1 + max( (chunkSize*3), (MAX_NAME_LENGTH  + 13) ) );
+  udpPacketSize = ( IDLENGTH + 1 + std::max( (chunkSize*3), (MAX_NAME_LENGTH  + 13) ) );
   packetBuffer = (byte *)malloc(udpPacketSize);//buffer to hold incoming and outgoing packets
 }
 
@@ -1617,7 +1698,7 @@ int parseUdpPoll() {
 }
 
 void udpUpdateFrame() {
-
+#ifdef ESP8266
   if (!minFrameTimeMet) {
     milliAmpsCounter = 0; // reset the milliAmpsCounter for the next frame.
     return;
@@ -1625,7 +1706,7 @@ void udpUpdateFrame() {
 
   //Reset time boolean
   minFrameTimeMet = false;
-
+#endif
   if (PACKETDROP_DEBUG_MODE) {
     Serial.println("Updating Frame");
   }
@@ -1798,34 +1879,34 @@ String formatBytes(size_t bytes) {
 }
 
 String getContentType(String filename) {
-  if (server.hasArg("download")) {
-    return "application/octet-stream";
-  } else if (filename.endsWith(".htm")) {
-    return "text/html";
-  } else if (filename.endsWith(".html")) {
-    return "text/html";
-  } else if (filename.endsWith(".css")) {
-    return "text/css";
-  } else if (filename.endsWith(".js")) {
-    return "application/javascript";
-  } else if (filename.endsWith(".png")) {
-    return "image/png";
-  } else if (filename.endsWith(".gif")) {
-    return "image/gif";
-  } else if (filename.endsWith(".jpg")) {
-    return "image/jpeg";
-  } else if (filename.endsWith(".ico")) {
-    return "image/x-icon";
-  } else if (filename.endsWith(".xml")) {
-    return "text/xml";
-  } else if (filename.endsWith(".pdf")) {
-    return "application/x-pdf";
-  } else if (filename.endsWith(".zip")) {
-    return "application/x-zip";
-  } else if (filename.endsWith(".gz")) {
-    return "application/x-gzip";
+  if (server.hasArg(F("download"))) {
+    return F("application/octet-stream");
+  } else if (filename.endsWith(F(".htm"))) {
+    return textHTML;
+  } else if (filename.endsWith(F(".html"))) {
+    return textHTML;
+  } else if (filename.endsWith(F(".css"))) {
+    return F("text/css");
+  } else if (filename.endsWith(F(".js"))) {
+    return F("application/javascript");
+  } else if (filename.endsWith(F(".png"))) {
+    return F("image/png");
+  } else if (filename.endsWith(F(".gif"))) {
+    return F("image/gif");
+  } else if (filename.endsWith(F(".jpg"))) {
+    return F("image/jpeg");
+  } else if (filename.endsWith(F(".ico"))) {
+    return F("image/x-icon");
+  } else if (filename.endsWith(F(".xml"))) {
+    return F("text/xml");
+  } else if (filename.endsWith(F(".pdf"))) {
+    return F("application/x-pdf");
+  } else if (filename.endsWith(F(".zip"))) {
+    return F("application/x-zip");
+  } else if (filename.endsWith(F(".gz"))) {
+    return F("application/x-gzip");
   }
-  return "text/plain";
+  return textPlain;
 }
 
 bool handleFileRead(String path) {
@@ -1847,7 +1928,7 @@ bool handleFileRead(String path) {
 }
 
 void handleFileUpload() {
-  if (server.uri() != "/edit") {
+  if (server.uri() != F("/edit")) {
     return;
   }
   HTTPUpload& upload = server.upload();
@@ -1875,68 +1956,98 @@ void handleFileUpload() {
 
 void handleFileDelete() {
   if (server.args() == 0) {
-    return server.send(500, "text/plain", F("BAD ARGS"));
+    return server.send(500, textPlain, F("BAD ARGS"));
   }
   String path = server.arg(0);
   if (path == "/") {
-    return server.send(500, "text/plain", F("BAD PATH"));
+    return server.send(500, textPlain, F("BAD PATH"));
   }
   if (!SPIFFS.exists(path)) {
-    return server.send(404, "text/plain", F("FileNotFound"));
+    return server.send(404, textPlain, F("FileNotFound"));
   }
   SPIFFS.remove(path);
-  server.send(200, "text/plain", "");
+  server.send(200, textPlain, "");
   path = String();
 }
 
 void handleFileCreate() {
   if (server.args() == 0) {
-    return server.send(500, "text/plain", F("BAD ARGS"));
+    return server.send(500, textPlain, F("BAD ARGS"));
   }
   String path = server.arg(0);
   if (path == "/") {
-    return server.send(500, "text/plain", F("BAD PATH"));
+    return server.send(500, textPlain, F("BAD PATH"));
   }
   if (SPIFFS.exists(path)) {
-    return server.send(500, "text/plain", F("FILE EXISTS"));
+    return server.send(500, textPlain, F("FILE EXISTS"));
   }
   File file = SPIFFS.open(path, "w");
   if (file) {
     file.close();
   } else {
-    return server.send(500, "text/plain", F("CREATE FAILED"));
+    return server.send(500, textPlain, F("CREATE FAILED"));
   }
-  server.send(200, "text/plain", "");
+  server.send(200, textPlain, "");
   path = String();
 }
 
 void handleFileList() {
   if (!server.hasArg("dir")) {
-    server.send(500, "text/plain", F("BAD ARGS"));
+    server.send(500, textPlain, F("BAD ARGS"));
     return;
   }
 
   String path = server.arg("dir");
+  String output = "[";
+#ifdef ESP8266
   Dir dir = SPIFFS.openDir(path);
   path = String();
-
-  String output = "[";
+  
   while (dir.next()) {
     File entry = dir.openFile("r");
     if (output != "[") {
       output += ',';
     }
     bool isDir = false;
-    output += "{\"type\":\"";
-    output += (isDir) ? "dir" : "file";
-    output += "\",\"name\":\"";
+    output += F("{\"type\":\"");
+    output += (isDir) ? F("dir") : F("file");
+    output += F("\",\"name\":\"");
     output += String(entry.name()).substring(1);
-    output += "\",\"size\":";
+    output += F("\",\"size\":");
     output += String(entry.size());
-    output += "}";
+    output += F("}");
     entry.close();
   }
+#else
 
+  File dir = SPIFFS.open(path);
+  if (!dir) {
+    server.send(400, textPlain, F("Failed to open"));
+    return;
+  }
+  if (!dir.isDirectory()) {
+    server.send(400, textPlain, F("Not a directory"));
+    return;
+  }
+
+  File file = dir.openNextFile();
+  while (file) {
+    if (output != "[") {
+      output += ",";
+    }
+    bool isDir = file.isDirectory();
+    output += F("{\"type\":\"");
+    output += (isDir) ? F("dir") : F("file");
+    output += F("\",\"name\":\"");
+    output += String(file.name()).substring(1);
+    output += F("\",\"size\":");
+    output += String(file.size());
+    output += F("}");
+    file.close();
+    file = dir.openNextFile();
+  }
+
+#endif
   output += "]";
-  server.send(200, "text/json", output);
+  server.send(200, textJSON, output);
 }
