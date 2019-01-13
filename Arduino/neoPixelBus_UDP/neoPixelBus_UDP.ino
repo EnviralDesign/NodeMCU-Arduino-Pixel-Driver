@@ -1,4 +1,3 @@
-// include some libraries
 #include <ArduinoJson.h>
 
 #ifdef ESP8266
@@ -6,6 +5,8 @@
 #include <ESP8266WebServer.h>
 #include <ESP8266mDNS.h>
 #include <DoubleResetDetector.h>
+//#include <ESP8266_WiFiManager.h>
+#include <WiFiManager.h>
 #define DRD_TIMEOUT 10
 #define DRD_ADDRESS 0
 DoubleResetDetector drd(DRD_TIMEOUT, DRD_ADDRESS);
@@ -16,6 +17,7 @@ ESP8266WebServer server(80);
 #include <WiFi.h>
 #include <WebServer.h>
 #include <ESPmDNS.h>
+#include <WiFiManager.h>
 //WiFiServer instance to query the module for status or to send commands to change some module settings //MDB
 WebServer server(80);
 #endif
@@ -23,10 +25,7 @@ WebServer server(80);
 #include <WiFiUdp.h>
 #include <NeoPixelBrightnessBus.h>
 #include <NeoPixelAnimator.h>
-
 #include <DNSServer.h>
-#include <WiFiManager.h>
-
 #include <FS.h>
 
 #ifdef ESP32
@@ -66,10 +65,20 @@ const char textJSON[] PROGMEM = {"text/json"};
 const char textPlain[] PROGMEM = {"text/plain"};
 const char appJSON[] PROGMEM = {"application/json"};
 const char plain[] PROGMEM = {"plain"};
+const char ipJSON[] PROGMEM = {"ip"};
+const char ssidJSON[] PROGMEM = {"ssid"};
+const char packetSzJSON[] PROGMEM = {"packetsize"};
+const char totalBytesJSON[] PROGMEM = {"totalBytes"};
+const char usedBytesJSON[] PROGMEM = {"usedBytes"};
+const char blockSizeJSON[] PROGMEM = {"blockSize"};
+const char pageSizeJSON[] PROGMEM = {"pageSize"};
+const char maxOpenFilesJSON[] PROGMEM = {"maxOpenFiles"};
+const char maxPathLengthJSON[] PROGMEM = {"maxPathLength"};
+//File server to transfer bitmaps
+const char host[] PROGMEM = {"esp8266fs"};
 
 //#define min(a,b) ((a)<(b)?(a):(b))
 //#define max(a,b) ((a)>(b)?(a):(b))
-
 
 ///////////////////// USER DEFINED VARIABLES START HERE /////////////////////////////
 // NOTICE: these startup settings, especially pertaining to number of pixels and starting color
@@ -94,8 +103,11 @@ uint16_t udpPort = 2390;
 //Set here the inital RGB color to show on module power up
 byte InitColor[] = {200, 75, 10};
 
-uint16_t udpMinFrameTime = 17; // 33 = 30 fps, 22 = 45 fps, 17 = 60fps
-
+#ifdef ESP8266
+uint16_t udpMinFrameTime = 16; // 33 = 30 fps, 22 = 45 fps, 16 = 60fps, 8 = 120fps
+#else
+uint16_t udpMinFrameTime = 1;
+#endif
 ///////////////////// USER DEFINED VARIABLES END HERE /////////////////////////////
 
 //maximum numbers of chunks per frame in order to validate we do not receive a wrong index when there are communciation errors
@@ -104,8 +116,6 @@ uint16_t udpMinFrameTime = 17; // 33 = 30 fps, 22 = 45 fps, 17 = 60fps
 //Interfaces user defined variables with memory stored in EEPROM
 EnviralDesign ed(&pixelsPerStrip, &chunkSize, &mAPerPixel, &deviceName, &amps, &udpPort, InitColor);
 
-//File server to transfer bitmaps
-const char* host = "esp8266fs";
 //holds the current upload
 File fsUploadFile;
 
@@ -124,8 +134,8 @@ File fsUploadFile;
 
 // If this is set to 1, a lot of debug data will print to the console.
 // Will cause horrible stuttering meant for single frame by frame tests and such.
-#define DEBUG_MODE 0 //MDB
-#define PACKETDROP_DEBUG_MODE 0
+bool DEBUG_MODE = false; //MDB
+bool PACKETDROP_DEBUG_MODE = false;
 
 //#define pixelPin D4  // make sure to set this to the correct pin, ignored for UartDriven branch
 const uint8_t PixelPin = 21;
@@ -230,7 +240,12 @@ void setup() {
   if (DEBUG_MODE) {
     Serial.println();
     Serial.println();
-    Serial.println(F("Serial started")); 
+    Serial.println(F("Serial started"));
+#ifdef ESP8266
+    Serial.println(F("Detected ESP8266..."));
+#else
+    Serial.println(F("Defaulting to ESP32..."));
+#endif
   }
   ed.setCompile(String(__TIME__));    //Compiling erases variables previously changed over the network
   ed.start();
@@ -378,32 +393,36 @@ void setup() {
 
   server.on(F("/mcu_json"), HTTP_GET, []() {
     // build json data
-    IPAddress local_ip=WiFi.localIP();
+    if (DEBUG_MODE) {
+      Serial.println(F("Received GET on /mcu_json"));
+    }
+    String local_ip=WiFi.localIP().toString();
+    String local_ssid=String(WiFi.SSID());
     String rt;
-    StaticJsonBuffer<1000> jsonBuffer;
+    StaticJsonBuffer<1024> jsonBuffer;
     JsonObject& root = jsonBuffer.createObject();
-    root[devNameJSON] = deviceName;
-    root[F("ip")] = String(local_ip[0]) + "." + String(local_ip[1]) + "." + String(local_ip[2]) + "." + String(local_ip[3]);
-    root[F("ssid")] = String(WiFi.SSID());
-    root[udpPortJSON] = udpPort;
-    root[F("packetsize")] = udpPacketSize;
-    root[chunkSzJSON] = chunkSize;
-    root[pixStripJSON] = pixelsPerStrip;
-    root[maPixelJSON] = mAPerPixel;
-    root[ampJSON] = amps;
-    JsonArray& wcArr = root.createNestedArray(initColJSON);
+    root[FPSTR(devNameJSON)] = deviceName;
+    root[FPSTR(ipJSON)] = local_ip;//String(local_ip[0]) + "." + String(local_ip[1]) + "." + String(local_ip[2]) + "." + String(local_ip[3]);
+    root[FPSTR(ssidJSON)] = local_ssid;
+    root[FPSTR(udpPortJSON)] = udpPort;
+    root[FPSTR(packetSzJSON)] = udpPacketSize;
+    root[FPSTR(chunkSzJSON)] = chunkSize;
+    root[FPSTR(pixStripJSON)] = pixelsPerStrip;
+    root[FPSTR(maPixelJSON)] = mAPerPixel;
+    root[FPSTR(ampJSON)] = amps;
+    JsonArray& wcArr = root.createNestedArray(FPSTR(initColJSON));
     wcArr.add(InitColor[0]);
     wcArr.add(InitColor[1]);
     wcArr.add(InitColor[2]);
 #ifdef ESP8266
     FSInfo fs_info;
     if (SPIFFS.info(fs_info)) {      
-      root[F("totalBytes")] = fs_info.totalBytes;
-      root[F("usedBytes")] = fs_info.usedBytes;
-      root[F("blockSize")] = fs_info.blockSize;
-      root[F("pageSize")] = fs_info.pageSize;
-      root[F("maxOpenFiles")] = fs_info.maxOpenFiles;
-      root[F("maxPathLength")] = fs_info.maxPathLength;
+      root[FPSTR(totalBytesJSON)] = fs_info.totalBytes;
+      root[FPSTR(usedBytesJSON)] = fs_info.usedBytes;
+      root[FPSTR(blockSizeJSON)] = fs_info.blockSize;
+      root[FPSTR(pageSizeJSON)] = fs_info.pageSize;
+      root[FPSTR(maxOpenFilesJSON)] = fs_info.maxOpenFiles;
+      root[FPSTR(maxPathLengthJSON)] = fs_info.maxPathLength;
     }
 #endif
     root.printTo(rt);
@@ -490,7 +509,7 @@ void setup() {
 
   server.on(F("/mcu_json"), HTTP_POST, []() {
     String updateString, cmd;
-    StaticJsonBuffer<255> jsonBuffer;    
+    StaticJsonBuffer<1536> jsonBuffer;
     char str[64];
     int val;
     float fval;
@@ -603,51 +622,59 @@ void setup() {
 
       blankFrame();
 
-      if (input[pixStripJSON] != NULL) {
-        root[pixStripJSON] = (updatePixels(input[pixStripJSON]) ? successStr : failStr);
+      if (input[FPSTR(pixStripJSON)] != NULL) {
+        root[FPSTR(pixStripJSON)] = (updatePixels(input[FPSTR(pixStripJSON)]) ? FPSTR(successStr) : FPSTR(failStr));
         startNeoPixelBus();
         initD = true;
       }
       
-      if (input[chunkSzJSON] != NULL) {
-        root[chunkSzJSON] = (updateChunk(input[chunkSzJSON]) ? successStr : failStr);
+      if (input[FPSTR(chunkSzJSON)] != NULL) {
+        root[FPSTR(chunkSzJSON)] = (updateChunk(input[FPSTR(chunkSzJSON)]) ? FPSTR(successStr) : FPSTR(failStr));
         setUdpPacketSize();
       }
       
-      if (input[maPixelJSON] != NULL) {
-        root[maPixelJSON] = (updateMA(input[maPixelJSON]) ? successStr : failStr);
+      if (input[FPSTR(maPixelJSON)] != NULL) {
+        root[FPSTR(maPixelJSON)] = (updateMA(input[FPSTR(maPixelJSON)]) ? FPSTR(successStr) : FPSTR(failStr));
         initD = true;
       }
       
-      if (input[devNameJSON].success()) {
-        root[devNameJSON] = (updateName(String((const char*)input[devNameJSON])) ? successStr : failStr);
+      if (input[FPSTR(devNameJSON)].success()) {
+        root[FPSTR(devNameJSON)] = (updateName(String((const char*)input[FPSTR(devNameJSON)])) ? FPSTR(successStr) : FPSTR(failStr));
       }
       
-      if (input[ampJSON].success()) {
-        root[ampJSON] = (updateAmps(input[ampJSON]) ? successStr : failStr);
+      if (input[FPSTR(ampJSON)].success()) {
+        root[FPSTR(ampJSON)] = (updateAmps(input[FPSTR(ampJSON)]) ? FPSTR(successStr) : FPSTR(failStr));
         
         initD = true;
       }
       
-      if (input[udpPortJSON] != NULL) {
-        root[udpPortJSON] = (updateUDP(input[udpPortJSON]) ? successStr : failStr);
+      if (input[FPSTR(udpPortJSON)] != NULL) {
+        root[FPSTR(udpPortJSON)] = (updateUDP(input[FPSTR(udpPortJSON)]) ? FPSTR(successStr) : FPSTR(failStr));
       }
       
-      if (input[initColJSON] != NULL ) {
-        v1 = input[initColJSON][0];
-        v2 = input[initColJSON][1];
-        v3 = input[initColJSON][2];
-        root[initColJSON] = (updateWarmUp(v1, v2, v3) ? successStr : failStr);
+      if (input[FPSTR(initColJSON)] != NULL ) {
+        v1 = input[FPSTR(initColJSON)][0];
+        v2 = input[FPSTR(initColJSON)][1];
+        v3 = input[FPSTR(initColJSON)][2];
+        root[FPSTR(initColJSON)] = (updateWarmUp(v1, v2, v3) ? FPSTR(successStr) : FPSTR(failStr));
         initD = true;
       }
 
-      if (input[frameTimeJSON].success()) {
-        udpMinFrameTime = input[frameTimeJSON].as<uint16_t>();
-        root[frameTimeJSON] = successStr;
+      if (input[FPSTR(frameTimeJSON)].success()) {
+        udpMinFrameTime = input[FPSTR(frameTimeJSON)].as<uint16_t>();
+        root[FPSTR(frameTimeJSON)] = FPSTR(successStr);
+      }
+
+      if (input[F("debug")].success()) {
+        DEBUG_MODE = input[F("debug")].as<bool>();
+      }
+
+      if (input[F("pkt_debug")].success()) {
+        PACKETDROP_DEBUG_MODE = input[F("pkt_debug")].as<bool>();
       }
       root.printTo(rt);
-      server.send(200, appJSON, rt);
       if (initD) initDisplay();
+      server.send(200, appJSON, rt);
     }
 
     udp.begin(udpPort);
@@ -702,8 +729,12 @@ void loop() { //main program loop
   
   if (streaming && !playingSprite && !playingEffect) {
     opcode = parseUdpPoll();
-  } else {
-    while(udp.parsePacket()); // Throw away udp packets
+  } else {      
+    while(udp.parsePacket()) { // Throw away udp packets
+      if (DEBUG_MODE) {
+        Serial.println(F("UDP packet dropped"));
+      }
+    }
     opcode = NOPACKET;
   }  
   
@@ -985,7 +1016,6 @@ void parseEffect() {
 }
 
 void playStreaming(int chunkID) {
-#ifdef ESP8266
   // New frame incoming check time
   if (chunkID == 0 && arrivedAt + udpMinFrameTime < millis()) {
     minFrameTimeMet = true;
@@ -994,7 +1024,7 @@ void playStreaming(int chunkID) {
   if (!minFrameTimeMet) {
     return;
   }
-#endif
+  
   arrivedAt=millis();
   
   if (PACKETDROP_DEBUG_MODE) { // If Debug mode is on print some stuff
@@ -1043,10 +1073,10 @@ void playStreaming(int chunkID) {
   }
 
   // if we're debugging packet drops, modify reply buffer.
-  if (PACKETDROP_DEBUG_MODE) {
-    //ReplyBuffer[action] = 1;
-    ReplyBuffer[chunkID] = 1;
-  }
+//  if (PACKETDROP_DEBUG_MODE) {
+//    //ReplyBuffer[action] = 1;
+//    ReplyBuffer[chunkID] = 1;
+//  }
 
   framesMD[frameIndex].packetSize=0;
   framesMD[frameIndex].power=0;
@@ -1201,6 +1231,7 @@ void startNeoPixelBus() {
   ledDataBuffer = (RgbColor *)malloc(pixelsPerStrip);
   
   strip->Begin();
+  delay(16);
 }
 
 void setUdpPacketSize() {
@@ -1225,10 +1256,10 @@ void initDisplay() {
   millisMultiplier = 0;
   InitialColor=RgbColor(InitColor[0],InitColor[1],InitColor[2]); 
   InitialColor=adjustToMaxMilliAmps(InitialColor);
-  for(int i=0;i<=90;i++) {
+  for(int i=0;i<=90;i+=2) {
     paintFrame(RgbColor(InitialColor.R*i/90.0,InitialColor.G*i/90.0,InitialColor.B*i/90.0));
     strip->Show();
-    delay(16);
+    delay(32);
   };
 }
 
@@ -1698,7 +1729,6 @@ int parseUdpPoll() {
 }
 
 void udpUpdateFrame() {
-#ifdef ESP8266
   if (!minFrameTimeMet) {
     milliAmpsCounter = 0; // reset the milliAmpsCounter for the next frame.
     return;
@@ -1706,9 +1736,10 @@ void udpUpdateFrame() {
 
   //Reset time boolean
   minFrameTimeMet = false;
-#endif
+
   if (PACKETDROP_DEBUG_MODE) {
-    Serial.println("Updating Frame");
+    Serial.println(F("Updating Frame"));
+    Serial.flush();
   }
   pinMode(BUILTIN_LED, OUTPUT);
 
@@ -1746,20 +1777,20 @@ void udpUpdateFrame() {
   }
 
   // if we're debugging packet drops, modify reply buffer.
-  if (PACKETDROP_DEBUG_MODE) {
-    // set the last byte of the reply buffer to 2, indiciating that the frame was sent to leds.
-    ReplyBuffer[sizeof(ReplyBuffer) - 1] = 2;
-    ReplyBuffer[0] = counterHolder;
-    counterHolder += 1;
-    // write out the response packet back to sender!
-    udp.beginPacket(udp.remoteIP(), UDP_PORT_OUT);
-    // clear the response buffer string.
-    for (byte i = 0; i < sizeof(ReplyBuffer); i++) {
-      udp.write(ReplyBuffer[i]);
-      ReplyBuffer[i] = 0;
-    }
-    udp.endPacket();
-  }
+//  if (PACKETDROP_DEBUG_MODE) {
+//    // set the last byte of the reply buffer to 2, indiciating that the frame was sent to leds.
+//    ReplyBuffer[sizeof(ReplyBuffer) - 1] = 2;
+//    ReplyBuffer[0] = counterHolder;
+//    counterHolder += 1;
+//    // write out the response packet back to sender!
+//    udp.beginPacket(udp.remoteIP(), UDP_PORT_OUT);
+//    // clear the response buffer string.
+//    for (byte i = 0; i < sizeof(ReplyBuffer); i++) {
+//      udp.write(ReplyBuffer[i]);
+//      ReplyBuffer[i] = 0;
+//    }
+//    udp.endPacket();
+//  }
 
   pinMode(BUILTIN_LED, INPUT);
 }
