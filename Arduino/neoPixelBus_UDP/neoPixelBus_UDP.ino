@@ -1272,7 +1272,7 @@ void LoopAnimUpdate(const AnimationParam& param) {
       animations.RestartAnimation(param.index);
 
       if (playingSprite) {
-        byte repeats = pixelsPerStrip / spritePixels;
+        uint16_t repeats = pixelsPerStrip / spritePixels;
         // If there are less pixels in the strip then the sprite do it at least once
         if (repeats == 0) {
           repeats = 1;
