@@ -87,7 +87,7 @@ const char host[] PROGMEM = {"esp8266fs"};
 String deviceName = "PxlNode-8266";
 
 // number of physical pixels in the strip.
-uint16_t pixelsPerStrip = 64;
+uint16_t pixelsPerStrip = 640;
 
 // This needs to be evenly divisible by PIXLES_PER_STRIP.
 // This represents how large our packets are that we send from our software source IN TERMS OF LEDS.
@@ -314,7 +314,7 @@ void setup() {
 
   // here we place all the different web services definition
 
-  server.on(F("/survey"), HTTP_GET, []() {
+  server.on("/survey", HTTP_GET, []() {
     // build Javascript code to draw SVG wifi graph
     IPAddress local_ip=WiFi.localIP();
     String rt=F("<!doctype html><html><body>");
@@ -351,7 +351,7 @@ void setup() {
     server.send(200, textHTML, rt);
   });
 
-  server.on(F("/getstatus"), HTTP_GET, []() {
+  server.on("/getstatus", HTTP_GET, []() {
     // build Javascript code to draw SVG wifi graph
     IPAddress local_ip=WiFi.localIP();
     String rt=F("<!doctype html><html><body>");
@@ -375,7 +375,7 @@ void setup() {
   });
   
   
-//  server.on(F("/mcu_info"), HTTP_GET, []() {
+//  server.on("/mcu_info", HTTP_GET, []() {
 //    // build javascript-like data
 //    IPAddress local_ip=WiFi.localIP();
 //
@@ -391,7 +391,7 @@ void setup() {
 //    server.send(200, textHTML, rt);
 //  });
 
-  server.on(F("/mcu_json"), HTTP_GET, []() {
+  server.on("/mcu_json", HTTP_GET, []() {
     // build json data
     if (DEBUG_MODE) {
       Serial.println(F("Received GET on /mcu_json"));
@@ -429,7 +429,7 @@ void setup() {
     server.send(200, appJSON, rt);
   });
 
-  server.on(F("/getframes"), HTTP_GET, []() {
+  server.on("/getframes", HTTP_GET, []() {
     String rt=F("<html><body><table>");
     rt+=F("<tr style=\"border:1px solid black\"><th>Frame<br>#</th><th>Action<br>byte</td><th>Arrived At<br>[ÂµS]</th><th>Packet Size<br>[bytes]</th><th>Power<br>[mA]</th><th>Power<br>Adjustment</th><th>Packet CPU<br>time [ÂµS]</th><th>Frame CPU<br>time [ÂµS]</th></tr>");
     long acum=0;
@@ -483,7 +483,7 @@ void setup() {
   });
 
 
-  server.on(F("/play"), HTTP_POST, []() {
+  server.on("/play", HTTP_POST, []() {
     if (DEBUG_MODE) {
       Serial.print(F("Received play POST "));Serial.println(server.arg(plain));
     }
@@ -507,7 +507,7 @@ void setup() {
     server.send(200,textPlain, F("OK"));
     });
 
-  server.on(F("/mcu_json"), HTTP_POST, []() {
+  server.on("/mcu_json", HTTP_POST, []() {
     String updateString, cmd;
     StaticJsonBuffer<1536> jsonBuffer;
     char str[64];
@@ -683,20 +683,20 @@ void setup() {
   // **** FILE SERVER HTTP ENDPOINTS **** //
   //SERVER INIT
   //list directory
-  server.on(F("/list"), HTTP_GET, handleFileList);
+  server.on("/list", HTTP_GET, handleFileList);
   //load editor
-  server.on(F("/edit"), HTTP_GET, []() {
+  server.on("/edit", HTTP_GET, []() {
     if (!handleFileRead("/edit.htm")) {
       server.send(404, textPlain, F("FileNotFound"));
     }
   });
   //create file
-  server.on(F("/edit"), HTTP_PUT, handleFileCreate);
+  server.on("/edit", HTTP_PUT, handleFileCreate);
   //delete file
-  server.on(F("/edit"), HTTP_DELETE, handleFileDelete);
+  server.on("/edit", HTTP_DELETE, handleFileDelete);
   //first callback is called after the request has ended with all parsed arguments
   //second callback handles file uploads at that location
-  server.on(F("/edit"), HTTP_POST, []() {
+  server.on("/edit", HTTP_POST, []() {
     server.send(200, textPlain, "");
   }, handleFileUpload);
 
@@ -774,7 +774,7 @@ void loop() { //main program loop
       blankFrame();
       lastStreamingFrame=0;
   }
-  server.handleClient();
+  //server.handleClient();
 }
 
 void blankFrame() {
