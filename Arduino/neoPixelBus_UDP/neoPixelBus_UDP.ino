@@ -245,6 +245,7 @@ void setup() {
     Serial.println(F("Detected ESP8266..."));
 #else
     Serial.println(F("Defaulting to ESP32..."));
+    esp_wifi_set_ps(WIFI_PS_NONE); // No power save mode
 #endif
   }
   ed.setCompile(String(__TIME__));    //Compiling erases variables previously changed over the network
