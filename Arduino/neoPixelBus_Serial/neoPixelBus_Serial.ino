@@ -181,7 +181,7 @@ void getSerialData() {
         }
       }
       packetBuffer[serialBytesRecvd++] = x;
-    }    
+    }
   }
 }
 
@@ -542,9 +542,11 @@ void serialSendPollReply() {
   ReplyBuffer[i++] = InitColor[2];
   if (PACKETDROP_DEBUG_MODE) {
     Serial.println(F("Replying..."));
-    for (i = 0; i < sizeof(ReplyBuffer); i++) {
-      Serial.write(ReplyBuffer[i]);Serial.print(F(":"));
-    }
+  }
+
+  Serial.write(ReplyBuffer, sizeof(ReplyBuffer));
+
+  if (PACKETDROP_DEBUG_MODE) {
     Serial.println(F("EndReplyBuffer"));
   }
 }
