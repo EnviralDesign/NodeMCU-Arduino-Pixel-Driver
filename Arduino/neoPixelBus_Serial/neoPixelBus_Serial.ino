@@ -12,10 +12,8 @@
 #define POLLREPLY 201
 #define CONFIG 202
 #define NOPACKET -1
-#define STREAMING_MIN_FRAME_TIME 33333 // 33333 = 30 fps
 #define VARIABLES_LENGTH 15 // sum of bytes for user variables. 2 (pixelsPerStrip) + 2 (chunkSize) + 2 (udpPort) + 4 (ampLimit) + 2 (maPerPixel) + 3 (WarmUpColor)
 int opcode;
-bool minFrameTimeMet = true;
 
 #define min(a,b) ((a)<(b)?(a):(b))
 #define max(a,b) ((a)>(b)?(a):(b))
@@ -72,11 +70,6 @@ const uint8_t PixelPin = 7;
 NeoPixelBrightnessBus<NeoGrbFeature, Neo800KbpsMethod> *strip;
 NeoGamma<NeoGammaTableMethod> colorGamma;
 
-RgbColor * ledDataBuffer;
-byte r;
-byte g;
-byte b;
-
 //Set here the inital RGB color to show on module power up
 RgbColor InitialColor;
 RgbColor LastColor=RgbColor(0,0,0);  //hold the last colour in order to stitch one effect with the following.
@@ -91,10 +84,7 @@ byte millisMultiplier = 0;
 byte ReplyBuffer[1 + MAX_NAME_LENGTH + VARIABLES_LENGTH] = {0};
 byte counterHolder = 0;
 
-unsigned long arrivedAt;
 unsigned long lastStreamingFrame=0;
-
-volatile boolean streaming=true;
 
 void setup() {
   
@@ -181,7 +171,7 @@ void getSerialData() {
         }
       }
       packetBuffer[serialBytesRecvd++] = x;
-    }    
+    }
   }
 }
 
@@ -227,17 +217,6 @@ HslColor adjustToMaxMilliAmps(HslColor c) {
 
 void playStreaming(int chunkID) {
   
-  // New frame incoming check time
-  if (chunkID == 0 && arrivedAt + STREAMING_MIN_FRAME_TIME < micros()) {
-    minFrameTimeMet = true;
-  }
-  
-  if (!minFrameTimeMet) {
-    return;
-  }
-  
-  arrivedAt=micros();
-  
   if (PACKETDROP_DEBUG_MODE) { // If Debug mode is on print some stuff
     Serial.println(F("---Incoming---"));
     Serial.print(F("ChunkID: "));
@@ -252,7 +231,6 @@ void playStreaming(int chunkID) {
     Serial.print(F("---------: "));
     Serial.print(chunkSize);
     Serial.print(F("   "));
-    //Serial.println((action - 1));
     Serial.println(F(""));
     Serial.print(F("Init_offset: "));
     Serial.println(initialOffset);
@@ -263,6 +241,9 @@ void playStreaming(int chunkID) {
   // loop through our recently received packet, and assign the corresponding
   // RGB values to their respective places in the strip.
   uint16_t led=0;
+  byte r;
+  byte g;
+  byte b;
   for (uint16_t i = 1; i < chunkSize*3;) {
 
     r = packetBuffer[i++];
@@ -280,7 +261,6 @@ void playStreaming(int chunkID) {
 
   // if we're debugging packet drops, modify reply buffer.
   if (PACKETDROP_DEBUG_MODE) {
-    //ReplyBuffer[action] = 1;
     ReplyBuffer[chunkID] = 1;
   }
 
@@ -343,11 +323,7 @@ void startNeoPixelBus() {
     delete strip;
   }
  
-  if (ledDataBuffer) {
-    free(ledDataBuffer);
-  }
   strip = new NeoPixelBrightnessBus<NeoGrbFeature, Neo800KbpsMethod>(pixelsPerStrip, PixelPin);
-  ledDataBuffer = (RgbColor *)malloc(pixelsPerStrip);
   
   strip->Begin();
 }
@@ -385,14 +361,6 @@ int parseSerialPoll() {
 }
 
 void serialUpdateFrame() {
-
-  if (!minFrameTimeMet) {
-    milliAmpsCounter = 0; // reset the milliAmpsCounter for the next frame.
-    return;
-  }
-
-  //Reset time boolean
-  minFrameTimeMet = false;
 
   if (PACKETDROP_DEBUG_MODE) {
     Serial.println("Updating Frame");
@@ -542,9 +510,11 @@ void serialSendPollReply() {
   ReplyBuffer[i++] = InitColor[2];
   if (PACKETDROP_DEBUG_MODE) {
     Serial.println(F("Replying..."));
-    for (i = 0; i < sizeof(ReplyBuffer); i++) {
-      Serial.write(ReplyBuffer[i]);Serial.print(F(":"));
-    }
+  }
+
+  Serial.write(ReplyBuffer, sizeof(ReplyBuffer));
+
+  if (PACKETDROP_DEBUG_MODE) {
     Serial.println(F("EndReplyBuffer"));
   }
 }
