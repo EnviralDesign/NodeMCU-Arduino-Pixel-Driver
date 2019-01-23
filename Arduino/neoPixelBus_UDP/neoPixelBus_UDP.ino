@@ -1,5 +1,5 @@
-#include <ArduinoJson.h>
 
+#include <ArduinoJson.h>
 #ifdef ESP8266
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
@@ -134,7 +134,7 @@ File fsUploadFile;
 
 // If this is set to 1, a lot of debug data will print to the console.
 // Will cause horrible stuttering meant for single frame by frame tests and such.
-bool DEBUG_MODE = false; //MDB
+bool DEBUG_MODE = true; //MDB
 bool PACKETDROP_DEBUG_MODE = false;
 
 //#define pixelPin D4  // make sure to set this to the correct pin, ignored for UartDriven branch
@@ -174,16 +174,12 @@ byte b;
 RgbColor InitialColor;
 RgbColor LastColor=RgbColor(0,0,0);  //hold the last colour in order to stitch one effect with the following.
 
-
-//byte action;
-
-// used later for holding values - used to dynamically limit brightness by amperage.
-RgbColor prevColor;
 uint32_t milliAmpsLimit = amps * 1000;
 uint32_t milliAmpsCounter = 0;
 byte millisMultiplier = 0;
 
 // A UDP instance to let us send and receive packets over UDP
+//#define CONFIG_ESP32_WIFI_DYNAMIC_RX_BUFFER_NUM 50
 WiFiUDP udp;
 
 // Reply buffer, for now hardcoded but this might encompass useful data like dropped packets etc.
@@ -246,6 +242,7 @@ void setup() {
 #else
     Serial.println(F("Defaulting to ESP32..."));
     esp_wifi_set_ps(WIFI_PS_NONE); // No power save mode
+    Serial.print(F("RX_BUF count: "));Serial.println(CONFIG_ESP32_WIFI_DYNAMIC_RX_BUFFER_NUM);
 #endif
   }
   ed.setCompile(String(__TIME__));    //Compiling erases variables previously changed over the network
@@ -275,6 +272,7 @@ void setup() {
     Serial.println(F("WiFi connected"));
     Serial.println(F("IP address: "));
     Serial.println(WiFi.localIP());
+    WiFi.setSleep(false);
   }
   //SPIFFS Setup access file system
 #ifdef ESP8266
@@ -775,7 +773,7 @@ void loop() { //main program loop
       blankFrame();
       lastStreamingFrame=0;
   }
-  //server.handleClient();
+  server.handleClient();
 }
 
 void blankFrame() {
