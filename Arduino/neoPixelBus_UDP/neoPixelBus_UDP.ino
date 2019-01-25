@@ -27,7 +27,7 @@ WebServer server(80);
 #include <NeoPixelAnimator.h>
 #include <DNSServer.h>
 #include <FS.h>
-#include "../lib/EnviralDesign.h"
+#include "EnviralDesign.h"
 
 #ifdef ESP32
 #include <SPIFFS.h>
