@@ -9,7 +9,7 @@
 #include <DoubleResetDetector.h>
 #include <ESP8266mDNS.h>
 #include <FS.h>
-#include <EnviralDesign.h>
+#include "../lib/EnviralDesign.h"
 
 #define DRD_TIMEOUT 10
 #define DRD_ADDRESS 0

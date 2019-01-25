@@ -2,7 +2,7 @@
 #include <NeoPixelBrightnessBus.h>
 #include <NeoPixelAnimator.h>
 
-#include <EnviralDesign.h>
+#include "EnviralDesign.h"
 
 // Streaming Poll Opcodes
 #define CHUNKIDMIN 0

@@ -19,11 +19,21 @@ EnviralDesign::EnviralDesign(uint16_t *pixelsPerStrip, uint16_t *chunkSize, uint
     this->iC = InitColor;
 }
 
-void EnviralDesign::start() {
-
+void startEEPROM() {
 #if defined(ESP8266) || defined(ESP32)
     EEPROM.begin(512);
 #endif
+}
+
+void endEEPROM() {
+#if defined(ESP8266) || defined(ESP32)
+    EEPROM.end();
+#endif
+}
+
+void EnviralDesign::start() {
+
+    startEEPROM();
     if (isWriteMode(PIXELS_PER_STRIP_ADDRESS)) {
         uint16_t val = readIntFromAddress(PIXELS_PER_STRIP_ADDRESS);
         if (val <= 1500) *this->pix = val;
@@ -53,9 +63,8 @@ void EnviralDesign::start() {
         this->iC[1] = EEPROM.read(INIT_COLOR + 3);
         this->iC[2] = EEPROM.read(INIT_COLOR + 4);
     }
-#if defined(ESP8266) || defined(ESP32)
-    EEPROM.end();
-#endif
+    endEEPROM();
+
 }
 
 void EnviralDesign::update(uint16_t pixelsPerStrip, uint16_t chunkSize, uint16_t maPerPixel) {
@@ -65,82 +74,56 @@ void EnviralDesign::update(uint16_t pixelsPerStrip, uint16_t chunkSize, uint16_t
 }
 
 void EnviralDesign::updatePixelsPerStrip(uint16_t val) {
-#if defined(ESP8266) || defined(ESP32)
-    EEPROM.begin(512);
-#endif
+    startEEPROM();
     updateMode(PIXELS_PER_STRIP_ADDRESS);
     writeIntToAddress(PIXELS_PER_STRIP_ADDRESS, val);
     if (val <= 1500) *this->pix = val;
-#if defined(ESP8266) || defined(ESP32)
-    EEPROM.end();
-#endif
+    endEEPROM();
 }
 
 void EnviralDesign::updateChunkSize(uint16_t val) {
-#if defined(ESP8266) || defined(ESP32)
-    EEPROM.begin(512);
-#endif
+    startEEPROM();
     updateMode(CHUNK_SIZE_ADDRESS);
     writeIntToAddress(CHUNK_SIZE_ADDRESS, val);
     *this->ch = val;
-#if defined(ESP8266) || defined(ESP32)
-    EEPROM.end();
-#endif
+    endEEPROM();
 }
 
 void EnviralDesign::updatemaPerPixel(uint16_t val) {
-#if defined(ESP8266) || defined(ESP32)
-    EEPROM.begin(512);
-#endif
+    startEEPROM();
     updateMode(MA_PER_PIXEL_ADDRESS);
     writeIntToAddress(MA_PER_PIXEL_ADDRESS, val);
     *this->maP = val;
-#if defined(ESP8266) || defined(ESP32)
-    EEPROM.end();
-#endif
+    endEEPROM();
 }
 
 void EnviralDesign::updateDeviceName(String val) {
     if (val.length() >= MAX_NAME_LENGTH) return;
-#if defined(ESP8266) || defined(ESP32)
-    EEPROM.begin(512);
-#endif
+    startEEPROM();
     updateMode(NAME_ADDRESS);
     writeStringToAddress(NAME_ADDRESS, val);
     *this->dName = val;
-#if defined(ESP8266) || defined(ESP32)
-    EEPROM.end();
-#endif
+    endEEPROM();
 }
 
 void EnviralDesign::updateAmps(float val) {
-#if defined(ESP8266) || defined(ESP32)
-    EEPROM.begin(512);
-#endif
+    startEEPROM();
     updateMode(AMPS);
     writeFloatToAddress(AMPS, val);
     *this->a = val;
-#if defined(ESP8266) || defined(ESP32)
-    EEPROM.end();
-#endif
+    endEEPROM();
 }
 
 void EnviralDesign::updateUDPport(uint16_t val) {
-#if defined(ESP8266) || defined(ESP32)
-    EEPROM.begin(512);
-#endif
+    startEEPROM();
     updateMode(UDP_PORT);
     writeIntToAddress(UDP_PORT, val);
     *this->uP = val;
-#if defined(ESP8266) || defined(ESP32)
-    EEPROM.end();
-#endif
+    endEEPROM();
 }
 
 void EnviralDesign::updateInitColor(byte val[]) {
-#if defined(ESP8266) || defined(ESP32)
-    EEPROM.begin(512);
-#endif
+    startEEPROM();
     updateMode(INIT_COLOR);
     EEPROM.write(INIT_COLOR + 2, val[0]);
     EEPROM.write(INIT_COLOR + 3, val[1]);
@@ -148,9 +131,7 @@ void EnviralDesign::updateInitColor(byte val[]) {
     this->iC[0] = val[0];
     this->iC[1] = val[1];
     this->iC[2] = val[2];
-#if defined(ESP8266) || defined(ESP32)
-    EEPROM.end();
-#endif
+    endEEPROM();
 }
 
 void EnviralDesign::writeIntToAddress(uint16_t address, uint16_t value) {
@@ -249,28 +230,20 @@ void EnviralDesign::setCompile(String cotime) {
   combinetime.num += String(sec).toInt() / 2;
   uint16_t storedtime = getStoredTime(COMPILE_TIME);
   if (combinetime.num != storedtime) {
-#if defined(ESP8266) || defined(ESP32)
-    EEPROM.begin(512);
-#endif
+    startEEPROM();
     EEPROM.write(COMPILE_TIME, combinetime.bytes[0]);
     EEPROM.write(COMPILE_TIME + 1, combinetime.bytes[1]);
-#if defined(ESP8266) || defined(ESP32)
-    EEPROM.end();
-#endif
+    endEEPROM();
   }
   
 }
 
 uint16_t EnviralDesign::getStoredTime(uint16_t address) {
-#if defined(ESP8266) || defined(ESP32)
-    EEPROM.begin(512);
-#endif
+    startEEPROM();
     UINT16_ARRAY storedtime;
     storedtime.bytes[0] = EEPROM.read(address);
     storedtime.bytes[1] = EEPROM.read(address + 1);
-#if defined(ESP8266) || defined(ESP32)
-    EEPROM.end();
-#endif
+    endEEPROM();
     return storedtime.num;
 }
 // EOF
