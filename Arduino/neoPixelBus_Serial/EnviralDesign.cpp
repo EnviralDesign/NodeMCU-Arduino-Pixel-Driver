@@ -19,8 +19,21 @@ EnviralDesign::EnviralDesign(uint16_t *pixelsPerStrip, uint16_t *chunkSize, uint
     this->iC = InitColor;
 }
 
-void EnviralDesign::start() {
+void startEEPROM() {
+#if defined(ESP8266) || defined(ESP32)
     EEPROM.begin(512);
+#endif
+}
+
+void endEEPROM() {
+#if defined(ESP8266) || defined(ESP32)
+    EEPROM.end();
+#endif
+}
+
+void EnviralDesign::start() {
+
+    startEEPROM();
     if (isWriteMode(PIXELS_PER_STRIP_ADDRESS)) {
         uint16_t val = readIntFromAddress(PIXELS_PER_STRIP_ADDRESS);
         if (val <= 1500) *this->pix = val;
@@ -50,7 +63,8 @@ void EnviralDesign::start() {
         this->iC[1] = EEPROM.read(INIT_COLOR + 3);
         this->iC[2] = EEPROM.read(INIT_COLOR + 4);
     }
-    EEPROM.end();
+    endEEPROM();
+
 }
 
 void EnviralDesign::update(uint16_t pixelsPerStrip, uint16_t chunkSize, uint16_t maPerPixel) {
@@ -60,56 +74,56 @@ void EnviralDesign::update(uint16_t pixelsPerStrip, uint16_t chunkSize, uint16_t
 }
 
 void EnviralDesign::updatePixelsPerStrip(uint16_t val) {
-    EEPROM.begin(512);
+    startEEPROM();
     updateMode(PIXELS_PER_STRIP_ADDRESS);
     writeIntToAddress(PIXELS_PER_STRIP_ADDRESS, val);
     if (val <= 1500) *this->pix = val;
-    EEPROM.end();
+    endEEPROM();
 }
 
 void EnviralDesign::updateChunkSize(uint16_t val) {
-    EEPROM.begin(512);
+    startEEPROM();
     updateMode(CHUNK_SIZE_ADDRESS);
     writeIntToAddress(CHUNK_SIZE_ADDRESS, val);
     *this->ch = val;
-    EEPROM.end();
+    endEEPROM();
 }
 
 void EnviralDesign::updatemaPerPixel(uint16_t val) {
-    EEPROM.begin(512);
+    startEEPROM();
     updateMode(MA_PER_PIXEL_ADDRESS);
     writeIntToAddress(MA_PER_PIXEL_ADDRESS, val);
     *this->maP = val;
-    EEPROM.end();
+    endEEPROM();
 }
 
 void EnviralDesign::updateDeviceName(String val) {
     if (val.length() >= MAX_NAME_LENGTH) return;
-    EEPROM.begin(512);
+    startEEPROM();
     updateMode(NAME_ADDRESS);
     writeStringToAddress(NAME_ADDRESS, val);
     *this->dName = val;
-    EEPROM.end();
+    endEEPROM();
 }
 
 void EnviralDesign::updateAmps(float val) {
-    EEPROM.begin(512);
+    startEEPROM();
     updateMode(AMPS);
     writeFloatToAddress(AMPS, val);
     *this->a = val;
-    EEPROM.end();
+    endEEPROM();
 }
 
 void EnviralDesign::updateUDPport(uint16_t val) {
-    EEPROM.begin(512);
+    startEEPROM();
     updateMode(UDP_PORT);
     writeIntToAddress(UDP_PORT, val);
     *this->uP = val;
-    EEPROM.end();
+    endEEPROM();
 }
 
 void EnviralDesign::updateInitColor(byte val[]) {
-    EEPROM.begin(512);
+    startEEPROM();
     updateMode(INIT_COLOR);
     EEPROM.write(INIT_COLOR + 2, val[0]);
     EEPROM.write(INIT_COLOR + 3, val[1]);
@@ -117,7 +131,7 @@ void EnviralDesign::updateInitColor(byte val[]) {
     this->iC[0] = val[0];
     this->iC[1] = val[1];
     this->iC[2] = val[2];
-    EEPROM.end();
+    endEEPROM();
 }
 
 void EnviralDesign::writeIntToAddress(uint16_t address, uint16_t value) {
@@ -216,20 +230,20 @@ void EnviralDesign::setCompile(String cotime) {
   combinetime.num += String(sec).toInt() / 2;
   uint16_t storedtime = getStoredTime(COMPILE_TIME);
   if (combinetime.num != storedtime) {
-    EEPROM.begin(512);
+    startEEPROM();
     EEPROM.write(COMPILE_TIME, combinetime.bytes[0]);
     EEPROM.write(COMPILE_TIME + 1, combinetime.bytes[1]);
-    EEPROM.end();
+    endEEPROM();
   }
   
 }
 
 uint16_t EnviralDesign::getStoredTime(uint16_t address) {
-    EEPROM.begin(512);
+    startEEPROM();
     UINT16_ARRAY storedtime;
     storedtime.bytes[0] = EEPROM.read(address);
     storedtime.bytes[1] = EEPROM.read(address + 1);
-    EEPROM.end();
+    endEEPROM();
     return storedtime.num;
 }
 // EOF

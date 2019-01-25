@@ -27,13 +27,12 @@ WebServer server(80);
 #include <NeoPixelAnimator.h>
 #include <DNSServer.h>
 #include <FS.h>
+#include "../lib/EnviralDesign.h"
 
 #ifdef ESP32
 #include <SPIFFS.h>
 #define FORMAT_SPIFFS_IF_FAILED true
 #endif
-
-#include <EnviralDesign.h>
 
 // UDP Poll Opcodes
 #define CHUNKIDMIN 0
