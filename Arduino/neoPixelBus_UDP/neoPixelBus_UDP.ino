@@ -76,9 +76,6 @@ const char maxPathLengthJSON[] PROGMEM = {"maxPathLength"};
 //File server to transfer bitmaps
 const char host[] PROGMEM = {"esp8266fs"};
 
-//#define min(a,b) ((a)<(b)?(a):(b))
-//#define max(a,b) ((a)>(b)?(a):(b))
-
 ///////////////////// USER DEFINED VARIABLES START HERE /////////////////////////////
 // NOTICE: these startup settings, especially pertaining to number of pixels and starting color
 // will ensure that your nodeMCU can be powered on and run off of a usb 2.0 port of your computer.
@@ -86,7 +83,7 @@ const char host[] PROGMEM = {"esp8266fs"};
 String deviceName = "PxlNode-8266";
 
 // number of physical pixels in the strip.
-uint16_t pixelsPerStrip = 640;
+uint16_t pixelsPerStrip = 64;
 
 // This needs to be evenly divisible by PIXLES_PER_STRIP.
 // This represents how large our packets are that we send from our software source IN TERMS OF LEDS.
@@ -121,28 +118,16 @@ File fsUploadFile;
 #define UDP_PORT_OUT 2391
 #define STREAMING_TIMEOUT 10  //  blank streaming frame after X seconds
 
-// NETWORK_HOME
-//IPAddress local_ip(10, 10, 10, 200);
-//IPAddress gateway(10, 10, 10, 254); //LM
-//IPAddress local_ip(192,168,1,200); //MDB
-//IPAddress gateway(192, 168, 1, 1); //MDB
-//IPAddress subnet(255, 255, 255, 0);
-
-//char ssid[] = "SSID";   // your SSID
-//char pass[] = "PWD";       // your network password 
-
 // If this is set to 1, a lot of debug data will print to the console.
 // Will cause horrible stuttering meant for single frame by frame tests and such.
 bool DEBUG_MODE = false; //MDB
 bool PACKETDROP_DEBUG_MODE = false;
 
-//#define pixelPin D4  // make sure to set this to the correct pin, ignored for UartDriven branch
+//#define pixelPin D4  // make sure to set this to the correct pin, ignored for UartDriven branch or ESP8266
 const uint8_t PixelPin = 21;
-//#ifdef ESP8266
+
 NeoPixelBrightnessBus<NeoGrbFeature, Neo800KbpsMethod> *strip;
-//#else
-//NeoPixelBrightnessBus<NeoGrbFeature, Neo800KbpsMethod> *strip;
-//#endif
+
 NeoGamma<NeoGammaTableMethod> colorGamma;
 NeoPixelAnimator animations(1); //Number of animations
 NeoPixelAnimator effectAnimations(1);
@@ -250,13 +235,6 @@ void setup() {
   
   //Initializes NeoPixelBus
   startNeoPixelBus();
-  
-  // We start by connecting to a WiFi network
-  //Serial.print("Connecting to ");
-  //Serial.println(ssid);
- // WiFi.mode(WIFI_STA);  // WIFi STATION mode only
-  //WiFi.begin(ssid, pass);
-  //WiFi.config(local_ip, gateway, subnet);
 
   //Animate from dark to initial color in 3 seconds on module power up
   initDisplay();
