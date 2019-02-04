@@ -133,7 +133,7 @@ File fsUploadFile;
 
 // If this is set to 1, a lot of debug data will print to the console.
 // Will cause horrible stuttering meant for single frame by frame tests and such.
-bool DEBUG_MODE = true; //MDB
+bool DEBUG_MODE = false; //MDB
 bool PACKETDROP_DEBUG_MODE = false;
 
 //#define pixelPin D4  // make sure to set this to the correct pin, ignored for UartDriven branch
@@ -178,7 +178,6 @@ uint32_t milliAmpsCounter = 0;
 byte millisMultiplier = 0;
 
 // A UDP instance to let us send and receive packets over UDP
-//#define CONFIG_ESP32_WIFI_DYNAMIC_RX_BUFFER_NUM 50
 WiFiUDP udp;
 
 // Reply buffer, for now hardcoded but this might encompass useful data like dropped packets etc.
@@ -271,7 +270,9 @@ void setup() {
     Serial.println(F("WiFi connected"));
     Serial.println(F("IP address: "));
     Serial.println(WiFi.localIP());
+#if defined(ESP32)
     WiFi.setSleep(false);
+#endif
   }
   //SPIFFS Setup access file system
 #ifdef ESP8266
@@ -1015,7 +1016,7 @@ void parseEffect() {
 
 void playStreaming(int chunkID) {
   // New frame incoming check time
-  if (chunkID == 0 && arrivedAt + udpMinFrameTime < millis()) {
+  if (chunkID == 0 && millis() - arrivedAt > udpMinFrameTime ) {
     minFrameTimeMet = true;
   }
   
@@ -1086,11 +1087,6 @@ void playStreaming(int chunkID) {
     Serial.println(F("--end of packet and stuff--"));
     Serial.println(F(""));
   }
-}
-
-String formatN(long n, int p) {
-  String ns="       "+String(n);
-  return ns.substring(ns.length()-p);
 }
 
 String StringZ(int n) {
