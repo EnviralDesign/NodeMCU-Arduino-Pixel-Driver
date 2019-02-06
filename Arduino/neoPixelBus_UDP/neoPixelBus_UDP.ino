@@ -1041,7 +1041,7 @@ void playStreaming(int chunkID) {
     b = packetBuffer[i++];
 
     strip->SetPixelColor(initialOffset+led++, colorGamma.Correct(RgbColor(r, g, b))); // this line uses gamma correction
-    milliAmpsCounter += (r + g + b); // increment our milliamps counter accordingly for use later.
+    //milliAmpsCounter += (r + g + b); // increment our milliamps counter accordingly for use later.
   }
   
 
@@ -1195,11 +1195,9 @@ void startNeoPixelBus() {
   if (ledDataBuffer) {
     free(ledDataBuffer);
   }
-//#ifdef ESP8266
-//  strip = new NeoPixelBrightnessBus<NeoGrbFeature, Neo800KbpsMethod> (pixelsPerStrip);
-//#else
+
   strip = new NeoPixelBrightnessBus<NeoGrbFeature, Neo800KbpsMethod>(pixelsPerStrip, PixelPin);
-//#endif
+
   ledDataBuffer = (RgbColor *)malloc(pixelsPerStrip);
   
   strip->Begin();
@@ -1702,7 +1700,7 @@ int parseUdpPoll() {
 
 void udpUpdateFrame() {
   if (!minFrameTimeMet) {
-    milliAmpsCounter = 0; // reset the milliAmpsCounter for the next frame.
+    //milliAmpsCounter = 0; // reset the milliAmpsCounter for the next frame.
     return;
   }
 
@@ -1716,9 +1714,17 @@ void udpUpdateFrame() {
   pinMode(BUILTIN_LED, OUTPUT);
 
   // this math gets our sum total of r/g/b vals down to milliamps (~60mA per pixel)
-  milliAmpsCounter /= 13;
+  //milliAmpsCounter /= 13;
   //framesMD[frameIndex].power=milliAmpsCounter;
 
+  // Calculate milliamps with values in the strip
+  uint8_t *pixelBuf = strip->Pixels();
+  uint32_t pixelSize = strip->PixelsSize();
+  float conversion = 255 / (maPerPixel / 3);
+  for(uint32_t i = 0; i < pixelSize; i++) {
+    milliAmpsCounter += floor((float)pixelBuf[i] / conversion);
+  }
+  
   // because the Darken function uses a value from 0-255 this next line maths it into the right range and type.
   millisMultiplier = 255 - (byte)( constrain( ((float)milliAmpsLimit / (float)milliAmpsCounter), 0, 1 ) * 256);
   millisMultiplier = map(millisMultiplier, 0, 255, 255, 0); // inverse the multiplier to work with new brightness control method
