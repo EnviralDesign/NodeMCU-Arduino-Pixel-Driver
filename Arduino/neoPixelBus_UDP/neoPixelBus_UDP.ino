@@ -159,8 +159,8 @@ RgbColor InitialColor;
 RgbColor LastColor=RgbColor(0,0,0);  //hold the last colour in order to stitch one effect with the following.
 
 uint32_t milliAmpsLimit = amps * 1000;
-uint32_t milliAmpsCounter = 0;
-byte millisMultiplier = 0;
+//uint32_t milliAmpsCounter = 0;
+//byte millisMultiplier = 0;
 
 // A UDP instance to let us send and receive packets over UDP
 WiFiUDP udp;
@@ -999,6 +999,9 @@ void playStreaming(int chunkID) {
   }
   
   if (!minFrameTimeMet) {
+    if (DEBUG_MODE) {
+      Serial.println(F("Min time not met"));
+    }
     return;
   }
   
@@ -1222,8 +1225,8 @@ void startUDP() {
 }
 
 void initDisplay() {  
-  milliAmpsCounter = 0;
-  millisMultiplier = 0;
+  //milliAmpsCounter = 0;
+  //millisMultiplier = 0;
   InitialColor=RgbColor(InitColor[0],InitColor[1],InitColor[2]); 
   InitialColor=adjustToMaxMilliAmps(InitialColor);
   for(int i=0;i<=90;i+=2) {
@@ -1387,7 +1390,7 @@ bool loadSpriteFile(File f, uint8_t cStartIn[], uint8_t cEndIn[]) {
         }
       }
 
-      ma += (mAPerPixel/3) * (rgb[0] + rgb[1] + rgb[2]) / 255.0;
+      ma += mAPerPixel * (rgb[0] + rgb[1] + rgb[2]) / 765.0; // 765 = 255 * 3
       
       imageBuffer[bufferCount++] = rgb[1];
       imageBuffer[bufferCount++] = rgb[0];
@@ -1700,7 +1703,9 @@ int parseUdpPoll() {
 
 void udpUpdateFrame() {
   if (!minFrameTimeMet) {
-    //milliAmpsCounter = 0; // reset the milliAmpsCounter for the next frame.
+    if (DEBUG_MODE) {
+      Serial.println(F("Min time not met"));
+    }
     return;
   }
 
@@ -1718,16 +1723,29 @@ void udpUpdateFrame() {
   //framesMD[frameIndex].power=milliAmpsCounter;
 
   // Calculate milliamps with values in the strip
+  uint32_t milliAmpsCounter = 0;
   uint8_t *pixelBuf = strip->Pixels();
   uint32_t pixelSize = strip->PixelsSize();
-  float conversion = 255 / (maPerPixel / 3);
+  double conversion = (mAPerPixel / 3.0) / 255;
   for(uint32_t i = 0; i < pixelSize; i++) {
-    milliAmpsCounter += floor((float)pixelBuf[i] / conversion);
+    milliAmpsCounter += pixelBuf[i];
+  }
+
+  if (PACKETDROP_DEBUG_MODE) {
+    Serial.print(F("Raw rgb values for mA limiter: "));Serial.println(milliAmpsCounter);
+    Serial.print(F("Conversion: "));Serial.println(conversion);
+    Serial.print(F("PixelSize: "));Serial.println(pixelSize);
+  }
+
+  milliAmpsCounter = floor((float)milliAmpsCounter * conversion);
+
+  if (PACKETDROP_DEBUG_MODE) {
+    Serial.print(F("Converted mA value: "));Serial.println(milliAmpsCounter);
   }
   
   // because the Darken function uses a value from 0-255 this next line maths it into the right range and type.
-  millisMultiplier = 255 - (byte)( constrain( ((float)milliAmpsLimit / (float)milliAmpsCounter), 0, 1 ) * 256);
-  millisMultiplier = map(millisMultiplier, 0, 255, 255, 0); // inverse the multiplier to work with new brightness control method
+  byte millisMultiplier = (byte)( constrain( ((float)milliAmpsLimit / (float)milliAmpsCounter), 0, 1 ) * 255);
+  //millisMultiplier = map(millisMultiplier, 0, 255, 255, 0); // inverse the multiplier to work with new brightness control method
   // Collect data  MDB
   //framesMD[frameIndex].adjustedPower=millisMultiplier;
 
@@ -1747,8 +1765,9 @@ void udpUpdateFrame() {
     strip->SetBrightness(millisMultiplier); // this new brightness control method was added to lib recently, affects entire strip at once.
   }
   strip->Show();   // write all the pixels out
+  strip->SetBrightness(255); // Reset brightness limiter
   lastStreamingFrame=millis();
-  milliAmpsCounter = 0; // reset the milliAmpsCounter for the next frame.
+  //milliAmpsCounter = 0; // reset the milliAmpsCounter for the next frame.
 
   if (PACKETDROP_DEBUG_MODE) { // If Debug mode is on print some stuff
     Serial.println(F("Finished updating Leds!"));
