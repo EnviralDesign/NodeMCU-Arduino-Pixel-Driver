@@ -3,7 +3,11 @@
 #include <OctoWS2811.h>
 #include <FastLED.h>
 
-#include "EnviralDesign.h"
+typedef union
+{
+    float num;
+    byte bytes[4];
+} FLOAT_ARRAY;
 
 // Streaming Poll Opcodes
 #define CHUNKIDMIN 0
@@ -15,9 +19,6 @@
 #define NOPACKET -1
 #define VARIABLES_LENGTH 15 // sum of bytes for user variables. 2 (pixelsPerStrip) + 2 (chunkSize) + 2 (udpPort) + 4 (ampLimit) + 2 (maPerPixel) + 3 (WarmUpColor)
 int opcode;
-
-#define min(a,b) ((a)<(b)?(a):(b))
-#define max(a,b) ((a)>(b)?(a):(b))
 
 // Stream packet protocol
 #define startMarker 254
@@ -38,14 +39,14 @@ byte * packetBuffer;
 String deviceName = "PxlNode-8266";
 
 // number of physical pixels in the strip.
-uint16_t pixelsPerStrip = 64;
+uint16_t pixelsPerStrip = 150;
 
 // This needs to be evenly divisible by PIXLES_PER_STRIP.
 // This represents how large our packets are that we send from our software source IN TERMS OF LEDS.
-uint16_t chunkSize = 64;
+uint16_t chunkSize = 150;
 
 // Dynamically limit brightness in terms of amperage.
-float amps = 1;
+float amps = 20;
 uint16_t mAPerPixel = 60;
 
 // Unused but kept for compatibility
@@ -57,7 +58,7 @@ byte InitColor[] = {200, 75, 10};
 ///////////////////// USER DEFINED VARIABLES END HERE /////////////////////////////
 
 //Interfaces user defined variables with memory stored in EEPROM
-EnviralDesign ed(&pixelsPerStrip, &chunkSize, &mAPerPixel, &deviceName, &amps, &udpPort, InitColor);
+//EnviralDesign ed(&pixelsPerStrip, &chunkSize, &mAPerPixel, &deviceName, &amps, &udpPort, InitColor);
 
 #define STREAMING_TIMEOUT 10  //  blank streaming frame after X seconds
 
@@ -70,13 +71,13 @@ EnviralDesign ed(&pixelsPerStrip, &chunkSize, &mAPerPixel, &deviceName, &amps, &
 CRGB *leds;
 
 //Set here the inital RGB color to show on module power up
-CRGB LastColor=CRGB(0,0,0);  //hold the last colour in order to stitch one effect with the following.
+//CRGB LastColor=CRGB(0,0,0);  //hold the last colour in order to stitch one effect with the following.
 
 // used later for holding values - used to dynamically limit brightness by amperage.
 uint32_t milliAmpsLimit = amps * 1000;
 
 // Reply buffer, for now hardcoded but this might encompass useful data like dropped packets etc.
-byte ReplyBuffer[1 + MAX_NAME_LENGTH + VARIABLES_LENGTH] = {0};
+byte ReplyBuffer[65+VARIABLES_LENGTH];//[1 + MAX_NAME_LENGTH + VARIABLES_LENGTH] = {0};
 byte counterHolder = 0;
 
 unsigned long lastStreamingFrame=0;
@@ -88,10 +89,14 @@ void setup() {
   if (DEBUG_MODE) {
     Serial.println();
     Serial.println();
-    Serial.println(F("Serial started")); 
+    Serial.println(F("Serial started"));
+    Serial.flush();
+    delay(100);
   }
-  ed.setCompile(String(__TIME__));    //Compiling erases variables previously changed over the network
-  ed.start(); 
+//  ed.setCompile(String(__TIME__));    //Compiling erases variables previously changed over the network
+//  ed.start(); 
+  // Set milliamps value
+  milliAmpsLimit = amps * 1000;
   
   //Initializes FastLED
   startFastLED();
@@ -102,11 +107,10 @@ void setup() {
   //Animate from dark to initial color in 3 seconds on module power up
   initDisplay();
 
-  // Set milliamps value
-  milliAmpsLimit = amps * 1000;
 
-  pinMode(LED_BUILTIN, OUTPUT);
-  digitalWrite(LED_BUILTIN, LOW);
+
+//  pinMode(LED_BUILTIN, OUTPUT);
+//  digitalWrite(LED_BUILTIN, LOW);
 
 }
 
@@ -122,7 +126,7 @@ void loop() { //main program loop
     serialUpdateFrame();
     
   } else if (opcode == CONFIG) {
-    serialConfigDevice();
+    //serialConfigDevice();
     
   } else if (opcode == POLL) {
     serialSendPollReply();
@@ -172,7 +176,7 @@ void getSerialData() {
 
 void blankFrame() {
   paintFrame(CRGB(0,0,0));
-  LEDS.show();
+  FastLED.show();
 }
 
 void paintFrame(CRGB c) {
@@ -183,11 +187,20 @@ void paintFrame(CRGB c) {
 }
 
 CRGB adjustToMaxMilliAmps(CRGB c) {
+  //String inputColor = "Input " + String(c[0]) + ", " + String(c[1]) + ", " + String(c[2]);
+  //Serial.println(inputColor);
   float ma = (mAPerPixel/3) * ( c[0] + c[1] + c[2] ) / 255.0 * pixelsPerStrip * NUM_STRIPS;
-  CRGB r = c;
+  //Serial.print("Calc'd ma: ");Serial.println(ma);
+  CRGB r = CRGB(c);
 
   if (ma > milliAmpsLimit) {
-    r *= milliAmpsLimit/ma;
+    float factor = milliAmpsLimit/ma;
+    //Serial.print("Limiting amps by ");Serial.println(factor);
+    r[0] = r[0] * factor;
+    r[1] = r[1] * factor;
+    r[2] = r[2] * factor;
+    //String result = "Result " + String(r[0]) + ", " + String(r[1]) + ", " + String(r[2]);
+    //Serial.println(result);
   }
 
   return r;
@@ -256,51 +269,51 @@ void playStreaming(int chunkID) {
     Serial.println(F(""));
   }
 }
-
-bool updatePixels(int val) {
-  if (val < 0 || val > 1500) {
-    return false;
-  } else {
-    ed.updatePixelsPerStrip(val);
-
-    return true;
-  }
-}
-
-bool updateChunk(int val) {
-  ed.updateChunkSize(val);
-  return true;
-}
-
-bool updateMA(int val) {
-  ed.updatemaPerPixel(val);
-
-  return true;
-}
-
-bool updateName(String val) {
-  ed.updateDeviceName(val);
-  return true;
-}
-
-bool updateAmps(float val) {
-  ed.updateAmps(val);
-  
-  // Update milliamps value
-  milliAmpsLimit = amps * 1000;
-  return true;
-}
-
-bool updateUDP(int val) {
-  ed.updateUDPport(val);
-  return true;
-}
-
-bool updateWarmUp(byte v1, byte v2, byte v3) {
-  byte parameters[3] = {v1, v2, v3};
-  ed.updateInitColor(parameters);
-  return true;
-}
+//
+//bool updatePixels(int val) {
+//  if (val < 0 || val > 1500) {
+//    return false;
+//  } else {
+//    ed.updatePixelsPerStrip(val);
+//
+//    return true;
+//  }
+//}
+//
+//bool updateChunk(int val) {
+//  ed.updateChunkSize(val);
+//  return true;
+//}
+//
+//bool updateMA(int val) {
+//  ed.updatemaPerPixel(val);
+//
+//  return true;
+//}
+//
+//bool updateName(String val) {
+//  ed.updateDeviceName(val);
+//  return true;
+//}
+//
+//bool updateAmps(float val) {
+//  ed.updateAmps(val);
+//  
+//  // Update milliamps value
+//  milliAmpsLimit = amps * 1000;
+//  return true;
+//}
+//
+//bool updateUDP(int val) {
+//  ed.updateUDPport(val);
+//  return true;
+//}
+//
+//bool updateWarmUp(byte v1, byte v2, byte v3) {
+//  byte parameters[3] = {v1, v2, v3};
+//  ed.updateInitColor(parameters);
+//  return true;
+//}
 
 void startFastLED() {
   if (DEBUG_MODE) {
@@ -310,27 +323,44 @@ void startFastLED() {
     delete leds;
   }
  
-  leds = (CRGB *)malloc(sizeof(CRGB) * NUM_STRIPS * pixelsPerStrip);
+  leds = (CRGB*)malloc(sizeof(CRGB) * NUM_STRIPS * pixelsPerStrip);
 
-  LEDS.addLeds<OCTOWS2811, RGB>(leds, pixelsPerStrip);
-  LEDS.setBrightness(255);
+  FastLED.addLeds<OCTOWS2811>(leds, pixelsPerStrip);
+  FastLED.setBrightness(255);
+  if (DEBUG_MODE) {
+    Serial.println(F("Finished Fast LED setup"));
+  }
 }
 
 void setPacketSize() {
-  if (packetBuffer) free(packetBuffer);
+  if (DEBUG_MODE){
+    Serial.println(F("Setting packet size"));
+  }
+  if (packetBuffer) {
+    delete packetBuffer;
+  }
   // Max packet size is the OPCODE + ( RGB[chunksize][3] OR Update size )
   // Update size MAX_NAME_LENGTH + sizeof(PixelsPerStrip, ChunkSize, UdpPort, AmpsLimit, MaPerPixel, WarmUpColor)
-  uint16_t packetSize = ( 1 + max( (chunkSize*3), (MAX_NAME_LENGTH  + VARIABLES_LENGTH) ) );
+  uint16_t packetSize = 1 + (chunkSize * 3);//( 1 + max( (chunkSize*3), (MAX_NAME_LENGTH  + VARIABLES_LENGTH) ) );
   packetBuffer = (byte *)malloc(packetSize);//buffer to hold incoming packets
+  if (DEBUG_MODE) {
+    Serial.print(F("Packet size set to: "));Serial.println(packetSize);
+  }
 }
 
-void initDisplay() {  
+void initDisplay() {
+  if (DEBUG_MODE) {
+    Serial.println(F("Initializing display"));
+  }
   CRGB InitialColor=adjustToMaxMilliAmps(CRGB(InitColor[0],InitColor[1],InitColor[2]));
   for(int i=0;i<=90;i++) {
     paintFrame(CRGB(InitialColor[0]*i/90.0,InitialColor[1]*i/90.0,InitialColor[2]*i/90.0));
-    LEDS.show();
+    FastLED.show();
     delay(16);
   };
+  if (DEBUG_MODE) {
+    Serial.println(F("Display Initialized"));
+  }
 }
 
 // Returns the opcode
@@ -350,12 +380,12 @@ void serialUpdateFrame() {
   if (PACKETDROP_DEBUG_MODE) {
     Serial.println("Updating Frame");
   }
-  digitalWrite(LED_BUILTIN, HIGH);
+//  digitalWrite(LED_BUILTIN, HIGH);
 
   // this math gets our sum total of r/g/b vals down to milliamps (~60mA per pixel)
   uint32_t milliAmpsCounter = 0;
-  CRGB *pixelBuf = LEDS.leds();
-  uint32_t pixelSize = LEDS.size();
+  CRGB *pixelBuf = FastLED.leds();
+  uint32_t pixelSize = FastLED.size();
   double conversion = (mAPerPixel / 3.0) / 255.0;
   for (uint32_t i = 0; i < pixelSize; i++) {
     milliAmpsCounter += pixelBuf[i][0];//R
@@ -388,10 +418,10 @@ void serialUpdateFrame() {
   // can loop through all the values again now that we have the right numbers
   // and scale brightness if we need to.  
   if(millisMultiplier!=255) { //dim LEDs only if required
-    LEDS.setBrightness(millisMultiplier); //
+    FastLED.setBrightness(millisMultiplier); //
   }
-  LEDS.show();   // write all the pixels out
-  LEDS.setBrightness(255); // Reset brightness limiter
+  FastLED.show();   // write all the pixels out
+  FastLED.setBrightness(255); // Reset brightness limiter
   lastStreamingFrame=millis();
   //milliAmpsCounter = 0; // reset the milliAmpsCounter for the next frame.
 
@@ -414,61 +444,61 @@ void serialUpdateFrame() {
     Serial.println();
   }
 
-  digitalWrite(LED_BUILTIN, LOW);
+//  digitalWrite(LED_BUILTIN, LOW);
 }
-
-void serialConfigDevice() {
-  // Set packetbuffer index past the OpCode byte
-  int i = 1;
-  // Get the device name and save it to a buffer
-  char nameBuf[MAX_NAME_LENGTH];
-  for (int j = 0; j < MAX_NAME_LENGTH; j++) {
-    nameBuf[j] = packetBuffer[i++];
-  }
-  nameBuf[MAX_NAME_LENGTH - 1] = '\0';
-  updateName(String(nameBuf));
-  byte valBuf[3];
-  
-  valBuf[0] = packetBuffer[i++];
-  valBuf[1] = packetBuffer[i++];
-  updatePixels(valBuf[0] * 256 + valBuf[1]);
-  
-  valBuf[0] = packetBuffer[i++];
-  valBuf[1] = packetBuffer[i++];
-  updateChunk(valBuf[0] * 256 + valBuf[1]);
-  
-  valBuf[0] = packetBuffer[i++];
-  valBuf[1] = packetBuffer[i++];
-  updateUDP(valBuf[0] * 256 + valBuf[1]);
-  
-  FLOAT_ARRAY tempF;
-  for (int j = 0; j < 4; j++) {
-    tempF.bytes[j] = packetBuffer[i++];
-  }
-  updateAmps(tempF.num);
-  
-  valBuf[0] = packetBuffer[i++];
-  valBuf[1] = packetBuffer[i++];
-  updateMA(valBuf[0] * 256 + valBuf[1]);
-  
-  valBuf[0] = packetBuffer[i++];
-  valBuf[1] = packetBuffer[i++];
-  valBuf[2] = packetBuffer[i++];
-  updateWarmUp(valBuf[0], valBuf[1], valBuf[2]);
-
-  //Initializes FastLED
-  startFastLED();
-  
-  //Sets the size of the Serial packets
-  setPacketSize();
-
-  //Animate from dark to initial color in 3 seconds on module power up
-  initDisplay();
-
-  // Set milliamps value
-  milliAmpsLimit = amps * 1000;
-  
-}
+//
+//void serialConfigDevice() {
+//  // Set packetbuffer index past the OpCode byte
+//  int i = 1;
+//  // Get the device name and save it to a buffer
+//  char nameBuf[MAX_NAME_LENGTH];
+//  for (int j = 0; j < MAX_NAME_LENGTH; j++) {
+//    nameBuf[j] = packetBuffer[i++];
+//  }
+//  nameBuf[MAX_NAME_LENGTH - 1] = '\0';
+//  updateName(String(nameBuf));
+//  byte valBuf[3];
+//  
+//  valBuf[0] = packetBuffer[i++];
+//  valBuf[1] = packetBuffer[i++];
+//  updatePixels(valBuf[0] * 256 + valBuf[1]);
+//  
+//  valBuf[0] = packetBuffer[i++];
+//  valBuf[1] = packetBuffer[i++];
+//  updateChunk(valBuf[0] * 256 + valBuf[1]);
+//  
+//  valBuf[0] = packetBuffer[i++];
+//  valBuf[1] = packetBuffer[i++];
+//  updateUDP(valBuf[0] * 256 + valBuf[1]);
+//  
+//  FLOAT_ARRAY tempF;
+//  for (int j = 0; j < 4; j++) {
+//    tempF.bytes[j] = packetBuffer[i++];
+//  }
+//  updateAmps(tempF.num);
+//  
+//  valBuf[0] = packetBuffer[i++];
+//  valBuf[1] = packetBuffer[i++];
+//  updateMA(valBuf[0] * 256 + valBuf[1]);
+//  
+//  valBuf[0] = packetBuffer[i++];
+//  valBuf[1] = packetBuffer[i++];
+//  valBuf[2] = packetBuffer[i++];
+//  updateWarmUp(valBuf[0], valBuf[1], valBuf[2]);
+//
+//  //Initializes FastLED
+//  startFastLED();
+//  
+//  //Sets the size of the Serial packets
+//  setPacketSize();
+//
+//  //Animate from dark to initial color in 3 seconds on module power up
+//  initDisplay();
+//
+//  // Set milliamps value
+//  milliAmpsLimit = amps * 1000;
+//  
+//}
  
 void serialSendPollReply() {
   int i = 0;
@@ -476,6 +506,7 @@ void serialSendPollReply() {
   // Set opcode to POLLREPLY
   ReplyBuffer[i++] = POLLREPLY;
 
+  int MAX_NAME_LENGTH = 64;//
   //Copy device name to reply buffer
   for (int j = 0; j < MAX_NAME_LENGTH; j++) {
     if (j < deviceName.length()) {
