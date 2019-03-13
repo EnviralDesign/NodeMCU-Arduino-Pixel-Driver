@@ -313,7 +313,6 @@ void startFastLED() {
   leds = (CRGB *)malloc(sizeof(CRGB) * NUM_STRIPS * pixelsPerStrip);
 
   LEDS.addLeds<OCTOWS2811, RGB>(leds, pixelsPerStrip);
-  LEDS.clearData();
   LEDS.setBrightness(255);
 }
 
