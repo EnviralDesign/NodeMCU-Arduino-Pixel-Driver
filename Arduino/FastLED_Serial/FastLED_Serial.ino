@@ -70,13 +70,10 @@ EnviralDesign ed(&pixelsPerStrip, &chunkSize, &mAPerPixel, &deviceName, &amps, &
 CRGB *leds;
 
 //Set here the inital RGB color to show on module power up
-CRGB InitialColor;
 CRGB LastColor=CRGB(0,0,0);  //hold the last colour in order to stitch one effect with the following.
 
 // used later for holding values - used to dynamically limit brightness by amperage.
 uint32_t milliAmpsLimit = amps * 1000;
-// uint32_t milliAmpsCounter = 0;
-// byte millisMultiplier = 0;
 
 // Reply buffer, for now hardcoded but this might encompass useful data like dropped packets etc.
 byte ReplyBuffer[1 + MAX_NAME_LENGTH + VARIABLES_LENGTH] = {0};
@@ -174,21 +171,16 @@ void getSerialData() {
 }
 
 void blankFrame() {
-  paintFrame(RgbColor(0,0,0));
-  strip->Show();
-};
+  paintFrame(CRGB(0,0,0));
+  LEDS.show();
+}
 
 void paintFrame(CRGB c) {
   c=adjustToMaxMilliAmps(c);
-  for (uint_32_t i = 0; i < pixelsPerStrip * NUM_STRIPS; i++) {
-    leds[i] = c
+  for (uint32_t i = 0; i < pixelsPerStrip * NUM_STRIPS; i++) {
+    leds[i] = c;
   }
 }
-
-void paintFrame(RgbColor c) {
-  c=adjustToMaxMilliAmps(c); // do not allow to exceed max current
-  for (uint16_t i = 0; i < pixelsPerStrip; i++) strip->SetPixelColor(i, c);
-};
 
 CRGB adjustToMaxMilliAmps(CRGB c) {
   float ma = (mAPerPixel/3) * ( c[0] + c[1] + c[2] ) / 255.0 * pixelsPerStrip * NUM_STRIPS;
@@ -202,35 +194,6 @@ CRGB adjustToMaxMilliAmps(CRGB c) {
 
 }
 
-RgbColor adjustToMaxMilliAmps(RgbColor c) {
-  float ma= (mAPerPixel/3) * (c.R+c.G+c.B) /255.0 * pixelsPerStrip;//float ma=20*(c.R+c.G+c.B)/255.0*pixelsPerStrip;
-  RgbColor r=c;
-  if (ma > milliAmpsLimit)  {// need to adjust down
-    r.R=c.R*milliAmpsLimit/ma;
-    r.G=c.G*milliAmpsLimit/ma;
-    r.B=c.B*milliAmpsLimit/ma;
-  }
-
-  return r;
-}; 
-
-HsbColor adjustToMaxMilliAmps(HsbColor c) {
-  float ma = (float)mAPerPixel * c.B * pixelsPerStrip;
-  HsbColor r = c;
-  if (ma > milliAmpsLimit) {
-    r.B = c.B * milliAmpsLimit/ma;
-  }
-  return r;
-}
-
-HslColor adjustToMaxMilliAmps(HslColor c) {
-  float ma = (float)mAPerPixel * c.L * pixelsPerStrip;
-  HslColor r = c;
-  if (ma > milliAmpsLimit) {
-    r.L = c.L * milliAmpsLimit/ma;
-  }
-  return r;
-}
 
 void playStreaming(int chunkID) {
   
@@ -261,16 +224,23 @@ void playStreaming(int chunkID) {
   byte r;
   byte g;
   byte b;
-  for (uint16_t i = 1; i < chunkSize*3;) {
 
+  uint32_t numOfPixels = pixelsPerStrip * NUM_STRIPS;
+  
+  for (uint32_t i = 1; i < chunkSize*3;) {
+
+    uint32_t index = initialOffset+led++;
+
+    if (index >= numOfPixels) {
+      break;
+    }
+    
     r = packetBuffer[i++];
     g = packetBuffer[i++];
     b = packetBuffer[i++];
-
-    strip->SetPixelColor(initialOffset+led++, colorGamma.Correct(RgbColor(r, g, b))); // this line uses gamma correction
-    milliAmpsCounter += (r + g + b); // increment our milliamps counter accordingly for use later.
+    
+    leds[index] = CRGB(r, g, b);
   }
-  
 
   if (PACKETDROP_DEBUG_MODE) { // If Debug mode is on print some stuff
     Serial.println(F("Finished For Loop!"));
@@ -340,9 +310,9 @@ void startFastLED() {
     delete leds;
   }
  
-  leds = (CRGB *)malloc(NUM_STRIPS * pixelsPerStrip);
+  leds = (CRGB *)malloc(sizeof(CRGB) * NUM_STRIPS * pixelsPerStrip);
 
-  LEDS.addLeds<OctoWS2811>(leds, pixelsPerStrip);
+  LEDS.addLeds<OCTOWS2811, RGB>(leds, pixelsPerStrip);
   LEDS.clearData();
   LEDS.setBrightness(255);
 }
@@ -356,10 +326,7 @@ void setPacketSize() {
 }
 
 void initDisplay() {  
-  // milliAmpsCounter = 0;
-  // millisMultiplier = 0;
-  InitialColor=CRGB(InitColor[0],InitColor[1],InitColor[2]); 
-  InitialColor=adjustToMaxMilliAmps(InitialColor);
+  CRGB InitialColor=adjustToMaxMilliAmps(CRGB(InitColor[0],InitColor[1],InitColor[2]));
   for(int i=0;i<=90;i++) {
     paintFrame(CRGB(InitialColor[0]*i/90.0,InitialColor[1]*i/90.0,InitialColor[2]*i/90.0));
     LEDS.show();
@@ -388,11 +355,13 @@ void serialUpdateFrame() {
 
   // this math gets our sum total of r/g/b vals down to milliamps (~60mA per pixel)
   uint32_t milliAmpsCounter = 0;
-  uint8_t *pixelBuf = LEDS.leds();
+  CRGB *pixelBuf = LEDS.leds();
   uint32_t pixelSize = LEDS.size();
   double conversion = (mAPerPixel / 3.0) / 255.0;
   for (uint32_t i = 0; i < pixelSize; i++) {
-    milliAmpsCounter += pixelBuf[i];
+    milliAmpsCounter += pixelBuf[i][0];//R
+    milliAmpsCounter += pixelBuf[i][1];//G
+    milliAmpsCounter += pixelBuf[i][2];//B
   }
   
   if (PACKETDROP_DEBUG_MODE) {
@@ -420,7 +389,7 @@ void serialUpdateFrame() {
   // can loop through all the values again now that we have the right numbers
   // and scale brightness if we need to.  
   if(millisMultiplier!=255) { //dim LEDs only if required
-    LEDS.setBrightness(millisMultiplier); // this new brightness control method was added to lib recently, affects entire strip at once.
+    LEDS.setBrightness(millisMultiplier); //
   }
   LEDS.show();   // write all the pixels out
   LEDS.setBrightness(255); // Reset brightness limiter
@@ -488,8 +457,8 @@ void serialConfigDevice() {
   valBuf[2] = packetBuffer[i++];
   updateWarmUp(valBuf[0], valBuf[1], valBuf[2]);
 
-  //Initializes NeoPixelBus
-  startNeoPixelBus();
+  //Initializes FastLED
+  startFastLED();
   
   //Sets the size of the Serial packets
   setPacketSize();

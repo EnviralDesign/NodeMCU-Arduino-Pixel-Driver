@@ -149,7 +149,6 @@ uint8_t lastColorEnd[3];
 // holds chunksize x 3(chans per led) + 1 "action" byte
 uint16_t udpPacketSize;
 byte * packetBuffer;
-RgbColor * ledDataBuffer;
 byte r;
 byte g;
 byte b;
@@ -1194,14 +1193,9 @@ void startNeoPixelBus() {
   if (strip) {
     delete strip;
   }
- 
-  if (ledDataBuffer) {
-    free(ledDataBuffer);
-  }
+
 
   strip = new NeoPixelBrightnessBus<NeoGrbFeature, Neo800KbpsMethod>(pixelsPerStrip, PixelPin);
-
-  ledDataBuffer = (RgbColor *)malloc(pixelsPerStrip);
   
   strip->Begin();
   delay(16);
