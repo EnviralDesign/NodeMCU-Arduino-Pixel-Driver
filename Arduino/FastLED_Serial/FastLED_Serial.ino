@@ -43,7 +43,7 @@ uint16_t pixelsPerStrip = 400;
 
 // This needs to be evenly divisible by PIXLES_PER_STRIP.
 // This represents how large our packets are that we send from our software source IN TERMS OF LEDS.
-uint16_t chunkSize = 100;
+uint16_t chunkSize = 300;
 
 // Dynamically limit brightness in terms of amperage.
 float amps = 40;
