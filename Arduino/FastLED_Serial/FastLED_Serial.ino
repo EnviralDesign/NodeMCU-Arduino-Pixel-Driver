@@ -36,17 +36,17 @@ byte * packetBuffer;
 // NOTICE: these startup settings, especially pertaining to number of pixels and starting color
 // will ensure that your nodeMCU can be powered on and run off of a usb 2.0 port of your computer.
 
-String deviceName = "PxlNode-8266";
+String deviceName = "PxlNode-Serial";
 
 // number of physical pixels in the strip.
-uint16_t pixelsPerStrip = 64;
+uint16_t pixelsPerStrip = 400;
 
 // This needs to be evenly divisible by PIXLES_PER_STRIP.
 // This represents how large our packets are that we send from our software source IN TERMS OF LEDS.
 uint16_t chunkSize = 64;
 
 // Dynamically limit brightness in terms of amperage.
-float amps = 1;
+float amps = 40;
 uint16_t mAPerPixel = 60;
 
 // Unused but kept for compatibility
