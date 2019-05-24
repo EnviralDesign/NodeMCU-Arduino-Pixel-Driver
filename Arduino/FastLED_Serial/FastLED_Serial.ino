@@ -43,7 +43,7 @@ uint16_t pixelsPerStrip = 64;
 
 // This needs to be evenly divisible by PIXLES_PER_STRIP.
 // This represents how large our packets are that we send from our software source IN TERMS OF LEDS.
-uint16_t chunkSize = 192;
+uint16_t chunkSize = 64;
 
 // Dynamically limit brightness in terms of amperage.
 float amps = 1;
@@ -153,6 +153,7 @@ void loop() { //main program loop
         DEBUG_PORT.println(F("Streaming timeout"));
       }
       blankFrame();
+      blankPacket();
       lastStreamingFrame=0;
   }
 }
@@ -185,6 +186,19 @@ void getSerialData() {
       }
       packetBuffer[serialBytesRecvd++] = x;
     }
+  }
+}
+
+uint16_t getPacketSize() {
+  return ( 1 + max( (chunkSize*3), (MAX_NAME_LENGTH  + VARIABLES_LENGTH) ) );
+}
+
+// Max packet size is the OPCODE + ( RGB[chunksize][3] OR Update size )
+// Update size MAX_NAME_LENGTH + sizeof(PixelsPerStrip, ChunkSize, UdpPort, AmpsLimit, MaPerPixel, WarmUpColor)
+void blankPacket() {
+  uint16_t packetSize = getPacketSize();
+  for (uint16_t i = 0; i < packetSize; i++) {
+    packetBuffer[i] = 0;
   }
 }
 
@@ -232,7 +246,7 @@ void playStreaming(int chunkID) {
 
   // Figure out what our starting offset is.
   //const uint16_t initialOffset = chunkSize * (action - 1);
-  const uint16_t initialOffset = chunkSize/3 * chunkID;
+  const uint16_t initialOffset = chunkSize * chunkID;
   
   if (PACKETDROP_DEBUG_MODE) { // If Debug mode is on print some stuff
     DEBUG_PORT.print(F("---------: "));
@@ -254,7 +268,7 @@ void playStreaming(int chunkID) {
 
   uint32_t numOfPixels = pixelsPerStrip * NUM_STRIPS;
   
-  for (uint32_t i = 1; i < chunkSize*3 + 1;) {
+  for (uint32_t i = 1; i < chunkSize*3;) {
 
     uint32_t index = initialOffset+led++;
 
@@ -359,9 +373,7 @@ void setPacketSize() {
   if (packetBuffer) {
     delete packetBuffer;
   }
-  // Max packet size is the OPCODE + ( RGB[chunksize][3] OR Update size )
-  // Update size MAX_NAME_LENGTH + sizeof(PixelsPerStrip, ChunkSize, UdpPort, AmpsLimit, MaPerPixel, WarmUpColor)
-  uint16_t packetSize = ( 1 + max( (chunkSize*3), (MAX_NAME_LENGTH  + VARIABLES_LENGTH) ) );
+  uint16_t packetSize = getPacketSize();
   packetBuffer = (byte *)malloc(packetSize);//buffer to hold incoming packets
   if (DEBUG_MODE) {
     DEBUG_PORT.print(F("Packet size set to: "));DEBUG_PORT.println(packetSize);
