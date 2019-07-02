@@ -39,11 +39,11 @@ byte * packetBuffer;
 String deviceName = "PxlNode-Serial";
 
 // number of physical pixels in the strip.
-uint16_t pixelsPerStrip = 400;
+uint16_t pixelsPerStrip = 400; // for teensy, 400 * 8 = 3,200
 
 // This needs to be evenly divisible by PIXLES_PER_STRIP.
 // This represents how large our packets are that we send from our software source IN TERMS OF LEDS.
-uint16_t chunkSize = 64;
+uint16_t chunkSize = 3200;
 
 // Dynamically limit brightness in terms of amperage.
 float amps = 40;
