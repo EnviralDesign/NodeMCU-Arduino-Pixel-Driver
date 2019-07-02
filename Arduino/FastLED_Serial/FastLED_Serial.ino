@@ -32,6 +32,15 @@ bool serialInProgress = false;
 bool serialAllReceived = false;
 byte * packetBuffer;
 
+uint16_t frameCounter = 0;
+unsigned long timeA;
+unsigned long timeB;
+unsigned long timeC;
+unsigned long timeD;
+unsigned long timeE;
+
+unsigned long timeZ;
+
 ///////////////////// USER DEFINED VARIABLES START HERE /////////////////////////////
 // NOTICE: these startup settings, especially pertaining to number of pixels and starting color
 // will ensure that your nodeMCU can be powered on and run off of a usb 2.0 port of your computer.
@@ -66,6 +75,7 @@ EnviralDesign ed(&pixelsPerStrip, &chunkSize, &mAPerPixel, &deviceName, &amps, &
 // Will cause horrible stuttering meant for single frame by frame tests and such.
 #define DEBUG_MODE 0 //MDB
 #define PACKETDROP_DEBUG_MODE 0
+#define OPTIMIZE_DEBUG_MODE 1
 
 #define NUM_STRIPS 8
 CRGB *leds;
@@ -129,6 +139,10 @@ void setup() {
 }
 
 void loop() { //main program loop  
+  if (OPTIMIZE_DEBUG_MODE) {
+    timeA = micros();
+  }
+  //DEBUG_PORT.println(frameCounter);
   getSerialData();
   opcode = parseSerialPoll();
   
@@ -156,6 +170,26 @@ void loop() { //main program loop
       blankPacket();
       lastStreamingFrame=0;
   }
+  
+  
+  //DEBUG_PORT.println(F(frameCounter + "Frame End"));
+  //DEBUG_PORT.println();
+  if (OPTIMIZE_DEBUG_MODE) {
+    timeZ = micros();
+  }
+   if (OPTIMIZE_DEBUG_MODE) {
+     if (opcode != -1) {
+       //DEBUG_PORT.println(  );
+       DEBUG_PORT.print( " OPCODE:" );
+       DEBUG_PORT.print( opcode );
+       DEBUG_PORT.print( " , " );
+       DEBUG_PORT.print( " TOTAL ELAPSED:" );
+       DEBUG_PORT.print( float(timeZ - timeA) / 1000 );
+       DEBUG_PORT.println( "ms , " );
+     }
+   }
+  
+  frameCounter += 1;
 }
 
 void getSerialData() {
