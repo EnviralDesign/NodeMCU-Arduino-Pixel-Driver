@@ -77,7 +77,7 @@ EnviralDesign ed(&pixelsPerStrip, &chunkSize, &mAPerPixel, &deviceName, &amps, &
 // Will cause horrible stuttering meant for single frame by frame tests and such.
 #define DEBUG_MODE 0 //MDB
 #define PACKETDROP_DEBUG_MODE 0
-#define OPTIMIZE_DEBUG_MODE 1
+#define OPTIMIZE_DEBUG_MODE 0
 
 #define NUM_STRIPS 8
 CRGB *leds;
