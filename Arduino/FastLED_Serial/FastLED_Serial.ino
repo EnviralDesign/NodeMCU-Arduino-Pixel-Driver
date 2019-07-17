@@ -41,6 +41,8 @@ unsigned long timeE;
 
 unsigned long timeZ;
 
+unsigned long packetBuildStart;
+
 ///////////////////// USER DEFINED VARIABLES START HERE /////////////////////////////
 // NOTICE: these startup settings, especially pertaining to number of pixels and starting color
 // will ensure that your nodeMCU can be powered on and run off of a usb 2.0 port of your computer.
@@ -108,7 +110,7 @@ void setup() {
   
   ////////////////// A whole bunch of initialization stuff that prints no matter what.
   DEBUG_PORT.begin(115200);
-  INPUT_PORT.begin(115200);
+  INPUT_PORT.begin(3000000);
   
   if (DEBUG_MODE) {
     DEBUG_PORT.println();
@@ -198,15 +200,23 @@ void getSerialData() {
     byte x = INPUT_PORT.read();
     
     if (x == startMarker) {
-    
+      if (OPTIMIZE_DEBUG_MODE) {
+        packetBuildStart = millis();
+      }
       serialBytesRecvd = 0;
       serialInProgress = true;
+
     
     } else if (x == endMarker) {
       
       serialInProgress = false;
       serialAllReceived = true;
-    
+
+      if (OPTIMIZE_DEBUG_MODE) {
+        unsigned long timeTaken = millis() - packetBuildStart;
+        DEBUG_PORT.print(F("Packet build time (ms): "));DEBUG_PORT.println(timeTaken);
+      }
+
     } else if (serialInProgress) {
     
       if (x == specialByte) {
