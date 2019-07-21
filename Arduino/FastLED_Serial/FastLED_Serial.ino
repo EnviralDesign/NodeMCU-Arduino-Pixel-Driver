@@ -6,7 +6,7 @@
 #include "EnviralDesign.h"
 
 //Change which Serial port the device listens for commands and outputs debugging info.
-#define DEBUG_PORT Serial
+#define DEBUG_PORT Serial1
 #define INPUT_PORT Serial
 
 // Streaming Poll Opcodes
@@ -24,7 +24,7 @@ int opcode;
 #define startMarker 254
 #define endMarker 255
 #define specialByte 253
-#define SERIAL_TIMEOUT 200 // wait for next byte in stream when decoding a high byte
+#define SERIAL_TIMEOUT 17 // wait for next byte in stream when decoding a high byte
 
 uint16_t serialBytesRecvd = 0;
 uint16_t serialRecvCount = 0;
@@ -98,7 +98,7 @@ CRGB *leds;
 //CRGB LastColor=CRGB(0,0,0);  //hold the last colour in order to stitch one effect with the following.
 
 // used later for holding values - used to dynamically limit brightness by amperage.
-uint32_t milliAmpsLimit = amps * 1000;
+uint32_t milliAmpsLimit;
 
 // Reply buffer, for now hardcoded but this might encompass useful data like dropped packets etc.
 byte ReplyBuffer[1 + MAX_NAME_LENGTH + VARIABLES_LENGTH] = {0};
@@ -109,7 +109,9 @@ unsigned long lastStreamingFrame=0;
 void setup() {
   
   ////////////////// A whole bunch of initialization stuff that prints no matter what.
-  DEBUG_PORT.begin(115200);
+  if (DEBUG_MODE || PACKETDROP_DEBUG_MODE || OPTIMIZE_DEBUG_MODE) {
+    DEBUG_PORT.begin(115200);
+  }
   INPUT_PORT.begin(3000000);
   
   if (DEBUG_MODE) {
@@ -132,8 +134,6 @@ void setup() {
 
   //Animate from dark to initial color in 3 seconds on module power up
   initDisplay();
-
-
 
 //  pinMode(LED_BUILTIN, OUTPUT);
 //  digitalWrite(LED_BUILTIN, LOW);
@@ -195,7 +195,8 @@ void loop() { //main program loop
 }
 
 void getSerialData() {
-  if (INPUT_PORT.available() > 0) {
+  unsigned long startTime = millis();
+  while ( INPUT_PORT.available() > 0 && millis() - startTime < SERIAL_TIMEOUT ) {
 
     byte x = INPUT_PORT.read();
     
@@ -216,11 +217,22 @@ void getSerialData() {
         unsigned long timeTaken = millis() - packetBuildStart;
         DEBUG_PORT.print(F("Packet build time (ms): "));DEBUG_PORT.println(timeTaken);
       }
+      break;
 
     } else if (serialInProgress) {
     
+      if (serialBytesRecvd >= getPacketSize()) {
+        serialInProgress = false;
+        serialAllReceived = false;
+        serialBytesRecvd = 0;
+        if (PACKETDROP_DEBUG_MODE) {
+          DEBUG_PORT.println(F("Dropped packet"));
+        }
+        break;
+      }
+
       if (x == specialByte) {
-        unsigned long startTime = millis();
+
         while(millis() - startTime < SERIAL_TIMEOUT) { // To decode the highbyte
           if (INPUT_PORT.available() > 0) {
             x += INPUT_PORT.read();
@@ -503,7 +515,6 @@ void serialUpdateFrame() {
   FastLED.show();   // write all the pixels out
   FastLED.setBrightness(255); // Reset brightness limiter
   lastStreamingFrame=millis();
-  //milliAmpsCounter = 0; // reset the milliAmpsCounter for the next frame.
 
   if (PACKETDROP_DEBUG_MODE) { // If Debug mode is on print some stuff
     DEBUG_PORT.println(F("Finished updating Leds!"));
