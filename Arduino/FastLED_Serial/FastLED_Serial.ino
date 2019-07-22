@@ -6,7 +6,7 @@
 #include "EnviralDesign.h"
 
 //Change which Serial port the device listens for commands and outputs debugging info.
-#define DEBUG_PORT Serial1
+#define DEBUG_PORT Serial
 #define INPUT_PORT Serial
 
 // Streaming Poll Opcodes
