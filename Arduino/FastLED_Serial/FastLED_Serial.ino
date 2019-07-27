@@ -7,7 +7,7 @@
 
 //Change which Serial port the device listens for commands and outputs debugging info.
 #define DEBUG_PORT Serial
-#define INPUT_PORT Serial
+#define INPUT_PORT Serial2
 
 // Streaming Poll Opcodes
 #define CHUNKIDMIN 0
@@ -24,10 +24,10 @@ int opcode;
 // #define startMarker 254
 // #define endMarker 255
 // #define specialByte 253
-#define SERIAL_TIMEOUT 17 // Max time to wait for a serial packet in milliseconds
+#define SERIAL_TIMEOUT 200 // Max time to wait for a serial packet in milliseconds
 
 
-byte * packetBuffer;
+uint8_t * packetBuffer;
 
 uint16_t frameCounter = 0;
 unsigned long timeA;
@@ -70,9 +70,9 @@ EnviralDesign ed(&pixelsPerStrip, &chunkSize, &mAPerPixel, &deviceName, &amps, &
 
 // If this is set to 1, a lot of debug data will print to the console.
 // Will cause horrible stuttering meant for single frame by frame tests and such.
-#define DEBUG_MODE 0 //MDB
+#define DEBUG_MODE 1 //MDB
 #define PACKETDROP_DEBUG_MODE 0
-#define OPTIMIZE_DEBUG_MODE 0
+#define OPTIMIZE_DEBUG_MODE 1
 
 #define NUM_STRIPS 8
 CRGB *leds;
@@ -107,7 +107,7 @@ void setup() {
   if (DEBUG_MODE || PACKETDROP_DEBUG_MODE || OPTIMIZE_DEBUG_MODE) {
     DEBUG_PORT.begin(115200);
   }
-  INPUT_PORT.begin(115200);
+  INPUT_PORT.begin(3000000);
   INPUT_PORT.setTimeout(SERIAL_TIMEOUT);
   
   if (DEBUG_MODE) {
@@ -201,27 +201,22 @@ int getSerialData() {
     int opcode_found = INPUT_PORT.read();
 
     if (opcode_found <= CHUNKIDMAX && opcode_found >= CHUNKIDMIN) {
-      
-      uint32_t bytesPerChunk = chunkSize * 3;
-      uint32_t expectedBytes = bytesPerChunk;
-      if (opcode_found > 0) {
-        // If bytes possible is greater then total bytes expected. Calculate bytes expected
-        uint32_t totalExpectedBytes = pixelsPerStrip * NUM_STRIPS * 3;
-        if ( opcode_found * bytesPerChunk > totalExpectedBytes) {
-          // Subtract previous possible bytes from total bytes expected.
-          expectedBytes = totalExpectedBytes - (opcode_found-1) * bytesPerChunk;
-        }
+
+      size_t num_read = INPUT_PORT.readBytes(packetBuffer, chunkSize * 3);
+      if (DEBUG_MODE) {
+        Serial.print(F("Bytes read "));Serial.println(num_read);
       }
-
-      Serial.readBytes(packetBuffer, expectedBytes);
-
+      
     } else if (opcode_found == UPDATEFRAME) {
 
       //Do nothing
     
     } else if (opcode_found == CONFIG) {
 
-      Serial.readBytes(packetBuffer, MAX_NAME_LENGTH + VARIABLES_LENGTH);
+      size_t num_read = INPUT_PORT.readBytes(packetBuffer, MAX_NAME_LENGTH + VARIABLES_LENGTH);
+      if (DEBUG_MODE) {
+        Serial.print(F("Bytes read "));Serial.println(num_read);
+      }
     
     } else if (opcode_found == POLL) {
 
@@ -260,7 +255,7 @@ int getSerialData() {
 }
 
 uint16_t getPacketSize() {
-  return ( 1 + max( (chunkSize*3), (MAX_NAME_LENGTH  + VARIABLES_LENGTH) ) );
+  return ( max( (chunkSize*3), (MAX_NAME_LENGTH  + VARIABLES_LENGTH) ) );
 }
 
 // Max packet size is the OPCODE + ( RGB[chunksize][3] OR Update size )
@@ -331,26 +326,23 @@ void playStreaming(int chunkID) {
 
   // loop through our recently received packet, and assign the corresponding
   // RGB values to their respective places in the strip.
-  uint16_t led=0;
-  byte r;
-  byte g;
-  byte b;
+  uint16_t index=initialOffset;
+  uint8_t r;
+  uint8_t g;
+  uint8_t b;
 
   uint32_t numOfPixels = pixelsPerStrip * NUM_STRIPS;
   
-  for (uint32_t i = 1; i < chunkSize*3;) {
+  for (uint32_t i = 0; i < chunkSize*3;) {
 
-    uint32_t index = initialOffset+led++;
-
-    if (index >= numOfPixels) {
-      break;
-    }
-    
     r = packetBuffer[i++];
     g = packetBuffer[i++];
     b = packetBuffer[i++];
-    
-    leds[index] = CRGB(r, g, b);
+
+    leds[index++] = CRGB(r, g, b);
+    if (index >= numOfPixels) {
+      break;
+    }
   }
 
   if (PACKETDROP_DEBUG_MODE) { // If Debug mode is on print some stuff
