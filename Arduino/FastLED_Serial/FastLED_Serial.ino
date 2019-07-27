@@ -7,7 +7,7 @@
 
 //Change which Serial port the device listens for commands and outputs debugging info.
 #define DEBUG_PORT Serial
-#define INPUT_PORT Serial2
+#define INPUT_PORT Serial
 
 // Streaming Poll Opcodes
 #define CHUNKIDMIN 0
@@ -70,9 +70,9 @@ EnviralDesign ed(&pixelsPerStrip, &chunkSize, &mAPerPixel, &deviceName, &amps, &
 
 // If this is set to 1, a lot of debug data will print to the console.
 // Will cause horrible stuttering meant for single frame by frame tests and such.
-#define DEBUG_MODE 1 //MDB
+#define DEBUG_MODE 0 //MDB
 #define PACKETDROP_DEBUG_MODE 0
-#define OPTIMIZE_DEBUG_MODE 1
+#define OPTIMIZE_DEBUG_MODE 0
 
 #define NUM_STRIPS 8
 CRGB *leds;
