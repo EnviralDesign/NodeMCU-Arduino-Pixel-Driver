@@ -21,15 +21,12 @@
 int opcode;
 
 // Stream packet protocol
-#define startMarker 254
-#define endMarker 255
-#define specialByte 253
-#define SERIAL_TIMEOUT 17 // wait for next byte in stream when decoding a high byte
+// #define startMarker 254
+// #define endMarker 255
+// #define specialByte 253
+#define SERIAL_TIMEOUT 17 // Max time to wait for a serial packet in milliseconds
 
-uint16_t serialBytesRecvd = 0;
-uint16_t serialRecvCount = 0;
-bool serialInProgress = false;
-bool serialAllReceived = false;
+
 byte * packetBuffer;
 
 uint16_t frameCounter = 0;
@@ -40,8 +37,6 @@ unsigned long timeD;
 unsigned long timeE;
 
 unsigned long timeZ;
-
-unsigned long packetBuildStart;
 
 ///////////////////// USER DEFINED VARIABLES START HERE /////////////////////////////
 // NOTICE: these startup settings, especially pertaining to number of pixels and starting color
@@ -71,7 +66,7 @@ byte InitColor[] = {200, 75, 10};
 //Interfaces user defined variables with memory stored in EEPROM
 EnviralDesign ed(&pixelsPerStrip, &chunkSize, &mAPerPixel, &deviceName, &amps, &udpPort, InitColor);
 
-#define STREAMING_TIMEOUT 10  //  blank streaming frame after X seconds
+#define STREAMING_TIMEOUT 10000  //  blank streaming frame after X milliseconds
 
 // If this is set to 1, a lot of debug data will print to the console.
 // Will cause horrible stuttering meant for single frame by frame tests and such.
@@ -112,7 +107,8 @@ void setup() {
   if (DEBUG_MODE || PACKETDROP_DEBUG_MODE || OPTIMIZE_DEBUG_MODE) {
     DEBUG_PORT.begin(115200);
   }
-  INPUT_PORT.begin(3000000);
+  INPUT_PORT.begin(115200);
+  INPUT_PORT.setTimeout(SERIAL_TIMEOUT);
   
   if (DEBUG_MODE) {
     DEBUG_PORT.println();
@@ -145,8 +141,7 @@ void loop() { //main program loop
     timeA = micros();
   }
   //DEBUG_PORT.println(frameCounter);
-  getSerialData();
-  opcode = parseSerialPoll();
+  opcode = getSerialData();
   
   // opcodes between 0 and 99 represent the chunkID
   if (opcode <= CHUNKIDMAX && opcode >= CHUNKIDMIN) {
@@ -164,15 +159,14 @@ void loop() { //main program loop
   } else if (opcode == POLLREPLY) {
     //POLLREPLY safe to ignore    
   // Streaming but nothing received check timeout
-  } else if (lastStreamingFrame!=0 && millis()-lastStreamingFrame>STREAMING_TIMEOUT*1000) {
+  } else if ( lastStreamingFrame != 0 && millis() - lastStreamingFrame > STREAMING_TIMEOUT ) {
       if (DEBUG_MODE) {
         DEBUG_PORT.println(F("Streaming timeout"));
       }
       blankFrame();
       blankPacket();
       lastStreamingFrame=0;
-  }
-  
+  }  
   
   //DEBUG_PORT.println(F(frameCounter + "Frame End"));
   //DEBUG_PORT.println();
@@ -194,54 +188,74 @@ void loop() { //main program loop
   frameCounter += 1;
 }
 
-void getSerialData() {
-  unsigned long startTime = millis();
-  while ( INPUT_PORT.available() > 0 && millis() - startTime < SERIAL_TIMEOUT ) {
+// Build packet and return the opcode
+int getSerialData() {  
 
-    byte x = INPUT_PORT.read();
+  if ( INPUT_PORT.available() > 0) {
+    unsigned long packetBuildStart;
     
-    if (x == startMarker) {
-      if (OPTIMIZE_DEBUG_MODE) {
-        packetBuildStart = millis();
-      }
-      serialBytesRecvd = 0;
-      serialInProgress = true;
-
-    
-    } else if (x == endMarker) {
-      
-      serialInProgress = false;
-      serialAllReceived = true;
-
-      if (OPTIMIZE_DEBUG_MODE) {
-        unsigned long timeTaken = millis() - packetBuildStart;
-        DEBUG_PORT.print(F("Packet build time (ms): "));DEBUG_PORT.println(timeTaken);
-      }
-      break;
-
-    } else if (serialInProgress) {
-    
-      if (serialBytesRecvd >= getPacketSize()) {
-        serialInProgress = false;
-        serialAllReceived = false;
-        serialBytesRecvd = 0;
-        if (PACKETDROP_DEBUG_MODE) {
-          DEBUG_PORT.println(F("Dropped packet"));
-        }
-        break;
-      }
-
-      if (x == specialByte) {
-
-        while(millis() - startTime < SERIAL_TIMEOUT) { // To decode the highbyte
-          if (INPUT_PORT.available() > 0) {
-            x += INPUT_PORT.read();
-            break;
-          }
-        }
-      }
-      packetBuffer[serialBytesRecvd++] = x;
+    if (OPTIMIZE_DEBUG_MODE) {
+      packetBuildStart = millis();
     }
+
+    int opcode_found = INPUT_PORT.read();
+
+    if (opcode_found <= CHUNKIDMAX && opcode_found >= CHUNKIDMIN) {
+      
+      uint32_t bytesPerChunk = chunkSize * 3;
+      uint32_t expectedBytes = bytesPerChunk;
+      if (opcode_found > 0) {
+        // If bytes possible is greater then total bytes expected. Calculate bytes expected
+        uint32_t totalExpectedBytes = pixelsPerStrip * NUM_STRIPS * 3;
+        if ( opcode_found * bytesPerChunk > totalExpectedBytes) {
+          // Subtract previous possible bytes from total bytes expected.
+          expectedBytes = totalExpectedBytes - (opcode_found-1) * bytesPerChunk;
+        }
+      }
+
+      Serial.readBytes(packetBuffer, expectedBytes);
+
+    } else if (opcode_found == UPDATEFRAME) {
+
+      //Do nothing
+    
+    } else if (opcode_found == CONFIG) {
+
+      Serial.readBytes(packetBuffer, MAX_NAME_LENGTH + VARIABLES_LENGTH);
+    
+    } else if (opcode_found == POLL) {
+
+      // Do nothing
+    
+    } else if (opcode_found == POLLREPLY) {
+
+      // Nothing to do with the reply so dump it
+      while ( INPUT_PORT.available() > 0 ) {
+        INPUT_PORT.read();
+      }
+    
+    // Unrecognized opcode
+    } else {
+      
+      if (DEBUG_MODE) {
+        DEBUG_PORT.println(F("Unrecognized opcode"));
+      }
+
+      while ( INPUT_PORT.available() > 0 ) {
+        INPUT_PORT.read();
+      }
+      
+      opcode_found = NOPACKET;
+    }
+    if (OPTIMIZE_DEBUG_MODE) {
+      unsigned long timeTaken = millis() - packetBuildStart;
+      DEBUG_PORT.print(F("Packet build time (ms): "));DEBUG_PORT.println(timeTaken);
+    }
+
+    return opcode_found;
+
+  } else {
+    return NOPACKET;
   }
 }
 
@@ -449,22 +463,6 @@ void initDisplay() {
   if (DEBUG_MODE) {
     DEBUG_PORT.println(F("Display Initialized"));
   }
-}
-
-// Returns the opcode
-int parseSerialPoll() {
-
-  if (!serialAllReceived) {
-    return NOPACKET;
-  } else {
-    serialAllReceived = false;
-  }
-
-  if (PACKETDROP_DEBUG_MODE) {
-    DEBUG_PORT.print(F("Got packet with opcode: "));DEBUG_PORT.println(packetBuffer[0]);
-  }
-  
-  return packetBuffer[0];
 }
 
 void serialUpdateFrame() {
