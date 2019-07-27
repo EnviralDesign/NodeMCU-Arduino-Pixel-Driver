@@ -204,7 +204,7 @@ int getSerialData() {
 
       size_t num_read = INPUT_PORT.readBytes(packetBuffer, chunkSize * 3);
       if (DEBUG_MODE) {
-        Serial.print(F("Bytes read "));Serial.println(num_read);
+        DEBUG_PORT.print(F("Bytes read "));DEBUG_PORT.println(num_read);
       }
       
     } else if (opcode_found == UPDATEFRAME) {
@@ -215,7 +215,7 @@ int getSerialData() {
 
       size_t num_read = INPUT_PORT.readBytes(packetBuffer, MAX_NAME_LENGTH + VARIABLES_LENGTH);
       if (DEBUG_MODE) {
-        Serial.print(F("Bytes read "));Serial.println(num_read);
+        DEBUG_PORT.print(F("Bytes read "));DEBUG_PORT.println(num_read);
       }
     
     } else if (opcode_found == POLL) {
