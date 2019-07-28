@@ -530,7 +530,7 @@ void serialUpdateFrame() {
 
 void serialConfigDevice() {
   // Set packetbuffer index past the OpCode byte
-  int i = 1;
+  int i = 0;
   // Get the device name and save it to a buffer
   char nameBuf[MAX_NAME_LENGTH];
   for (int j = 0; j < MAX_NAME_LENGTH; j++) {
