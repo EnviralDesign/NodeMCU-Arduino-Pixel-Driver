@@ -1,4 +1,4 @@
-# PxlNode-8266
+# PxlNode (UDP + SERIAL)
 
 ![alt tag](https://www.enviral-design.com/blog/wp-content/uploads/2017/11/cool-PxlNode.jpg)
 
