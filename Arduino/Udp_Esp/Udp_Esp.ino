@@ -107,7 +107,7 @@ uint16_t udpMinFrameTime = 1;
 ///////////////////// USER DEFINED VARIABLES END HERE /////////////////////////////
 
 //maximum numbers of chunks per frame in order to validate we do not receive a wrong index when there are communciation errors
-#define MAX_ACTION_BYTE 4
+#define MAX_ACTION_BYTE 10
 
 //Interfaces user defined variables with memory stored in EEPROM
 EnviralDesign ed(&pixelsPerStrip, &chunkSize, &mAPerPixel, &deviceName, &amps, &udpPort, InitColor);
