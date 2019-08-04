@@ -4,9 +4,9 @@ The PxlNode family of code, has been designed with the goal of making it easier 
 
 If you are interested in using this code base with other software, the protocol is entirely documented and fairly straight forwards to grasp.
 
-For a complete guide, and breakdown of both Teensy and NodeMCU code bases, please refer to the complete WIKI.
+For a complete guide, and breakdown of both Teensy and NodeMCU code bases, please refer to the complete [WIKI](https://github.com/EnviralDesign/NodeMCU-Arduino-Pixel-Driver/wiki).
 
-https://github.com/EnviralDesign/NodeMCU-Arduino-Pixel-Driver/wiki
+_
 ![alt tag](https://www.enviral-design.com/blog/wp-content/uploads/2017/11/cool-PxlNode.jpg)
 
 -
