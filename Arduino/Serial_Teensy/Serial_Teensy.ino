@@ -21,12 +21,9 @@
 int opcode;
 
 // Stream packet protocol
-// #define startMarker 254
-// #define endMarker 255
-// #define specialByte 253
 #define SERIAL_TIMEOUT 200 // Max time to wait for a serial packet in milliseconds
 
-
+// Holds data from serial
 uint8_t * packetBuffer;
 
 uint16_t frameCounter = 0;
@@ -92,7 +89,7 @@ CRGB *leds;
 //Set here the inital RGB color to show on module power up
 //CRGB LastColor=CRGB(0,0,0);  //hold the last colour in order to stitch one effect with the following.
 
-// used later for holding values - used to dynamically limit brightness by amperage.
+//used to dynamically limit brightness by amperage.
 uint32_t milliAmpsLimit;
 
 // Reply buffer, for now hardcoded but this might encompass useful data like dropped packets etc.
@@ -130,9 +127,6 @@ void setup() {
 
   //Animate from dark to initial color in 3 seconds on module power up
   initDisplay();
-
-//  pinMode(LED_BUILTIN, OUTPUT);
-//  digitalWrite(LED_BUILTIN, LOW);
 
 }
 
@@ -300,7 +294,6 @@ CRGB adjustToMaxMilliAmps(CRGB c) {
 
 }
 
-
 void playStreaming(int chunkID) {
   
   if (PACKETDROP_DEBUG_MODE) { // If Debug mode is on print some stuff
@@ -436,7 +429,7 @@ void setPacketSize() {
     delete packetBuffer;
   }
   uint16_t packetSize = getPacketSize();
-  packetBuffer = (byte *)malloc(packetSize);//buffer to hold incoming packets
+  packetBuffer = (uint8_t *)malloc(packetSize);//buffer to hold incoming packets
   if (DEBUG_MODE) {
     DEBUG_PORT.print(F("Packet size set to: "));DEBUG_PORT.println(packetSize);
   }
@@ -462,7 +455,6 @@ void serialUpdateFrame() {
   if (PACKETDROP_DEBUG_MODE) {
     DEBUG_PORT.println("Updating Frame");
   }
-//  digitalWrite(LED_BUILTIN, HIGH);
 
   // this math gets our sum total of r/g/b vals down to milliamps (~60mA per pixel)
   uint32_t milliAmpsCounter = 0;
@@ -522,14 +514,12 @@ void serialUpdateFrame() {
       INPUT_PORT.write(ReplyBuffer[i]);
       ReplyBuffer[i] = 0;
     }
-  
   }
 
 //  digitalWrite(LED_BUILTIN, LOW);
 }
 
 void serialConfigDevice() {
-  // Set packetbuffer index past the OpCode byte
   int i = 0;
   // Get the device name and save it to a buffer
   char nameBuf[MAX_NAME_LENGTH];

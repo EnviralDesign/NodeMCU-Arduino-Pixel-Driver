@@ -4,6 +4,10 @@
 
 #include "EnviralDesign.h"
 
+//Change which Serial port the device listens for commands and outputs debugging info.
+#define DEBUG_PORT Serial
+#define INPUT_PORT Serial
+
 // Streaming Poll Opcodes
 #define CHUNKIDMIN 0
 #define CHUNKIDMAX 99
@@ -15,33 +19,24 @@
 #define VARIABLES_LENGTH 15 // sum of bytes for user variables. 2 (pixelsPerStrip) + 2 (chunkSize) + 2 (udpPort) + 4 (ampLimit) + 2 (maPerPixel) + 3 (WarmUpColor)
 int opcode;
 
-#define min(a,b) ((a)<(b)?(a):(b))
-#define max(a,b) ((a)>(b)?(a):(b))
-
 // Stream packet protocol
-#define startMarker 254
-#define endMarker 255
-#define specialByte 253
 #define SERIAL_TIMEOUT 200 // wait for next byte in stream when decoding a high byte
 
-uint16_t serialBytesRecvd = 0;
-uint16_t serialRecvCount = 0;
-bool serialInProgress = false;
-bool serialAllReceived = false;
-byte * packetBuffer;
+// Holds data from serial
+uint8_t * packetBuffer;
 
 ///////////////////// USER DEFINED VARIABLES START HERE /////////////////////////////
 // NOTICE: these startup settings, especially pertaining to number of pixels and starting color
 // will ensure that your nodeMCU can be powered on and run off of a usb 2.0 port of your computer.
 
-String deviceName = "PxlNode-8266";
+String deviceName = "PxlNode-Serial";
 
 // number of physical pixels in the strip.
-uint16_t pixelsPerStrip = 100;
+uint16_t pixelsPerStrip = 64;
 
 // This needs to be evenly divisible by PIXLES_PER_STRIP.
 // This represents how large our packets are that we send from our software source IN TERMS OF LEDS.
-uint16_t chunkSize = 100;
+uint16_t chunkSize = 64;
 
 // Dynamically limit brightness in terms of amperage.
 float amps = 50;
@@ -58,27 +53,21 @@ byte InitColor[] = {200, 75, 10};
 //Interfaces user defined variables with memory stored in EEPROM
 EnviralDesign ed(&pixelsPerStrip, &chunkSize, &mAPerPixel, &deviceName, &amps, &udpPort, InitColor);
 
-#define STREAMING_TIMEOUT 10  //  blank streaming frame after X seconds
+#define STREAMING_TIMEOUT 10000  //  blank streaming frame after X seconds
 
 // If this is set to 1, a lot of debug data will print to the console.
 // Will cause horrible stuttering meant for single frame by frame tests and such.
-#define DEBUG_MODE 0 //MDB
+#define DEBUG_MODE 1 //MDB
 #define PACKETDROP_DEBUG_MODE 0
 
 //#define pixelPin D4  // make sure to set this to the correct pin, ignored for UartDriven branch
-const uint8_t PixelPin = 7;
-NeoPixelBrightnessBus<NeoGrbFeature, Neo800KbpsMethod> *strip;
+const uint8_t PixelPin = 2;
+
+NeoPixelBrightnessBus <NeoGrbFeature, Neo800KbpsMethod> *strip;
 NeoGamma<NeoGammaTableMethod> colorGamma;
 
-//Set here the inital RGB color to show on module power up
-RgbColor InitialColor;
-RgbColor LastColor=RgbColor(0,0,0);  //hold the last colour in order to stitch one effect with the following.
-
-// used later for holding values - used to dynamically limit brightness by amperage.
-RgbColor prevColor;
-uint32_t milliAmpsLimit = amps * 1000;
-uint32_t milliAmpsCounter = 0;
-byte millisMultiplier = 0;
+//used to dynamically limit brightness by amperage.
+uint32_t milliAmpsLimit;
 
 // Reply buffer, for now hardcoded but this might encompass useful data like dropped packets etc.
 byte ReplyBuffer[1 + MAX_NAME_LENGTH + VARIABLES_LENGTH] = {0};
@@ -89,11 +78,18 @@ unsigned long lastStreamingFrame=0;
 void setup() {
   
   ////////////////// A whole bunch of initialization stuff that prints no matter what.
-  Serial.begin(115200);
+  if (DEBUG_MODE || PACKETDROP_DEBUG_MODE && INPUT_PORT != DEBUG_PORT) {
+    DEBUG_PORT.begin(115200);
+  }
+  INPUT_PORT.begin(115200);
+  INPUT_PORT.setTimeout(SERIAL_TIMEOUT);
+  delay(10);
   if (DEBUG_MODE) {
-    Serial.println();
-    Serial.println();
-    Serial.println(F("Serial started")); 
+    DEBUG_PORT.println();
+    DEBUG_PORT.println();
+    DEBUG_PORT.println(F("Serial started"));
+    DEBUG_PORT.flush();
+    delay(100);
   }
   ed.setCompile(String(__TIME__));    //Compiling erases variables previously changed over the network
   ed.start(); 
@@ -110,14 +106,11 @@ void setup() {
   // Set milliamps value
   milliAmpsLimit = amps * 1000;
 
-  pinMode(LED_BUILTIN, OUTPUT);
-  digitalWrite(LED_BUILTIN, LOW);
-
 }
 
 void loop() { //main program loop  
-  getSerialData();
-  opcode = parseSerialPoll();
+  
+  opcode = getSerialData();
   
   // opcodes between 0 and 99 represent the chunkID
   if (opcode <= CHUNKIDMAX && opcode >= CHUNKIDMIN) {
@@ -137,41 +130,81 @@ void loop() { //main program loop
   // Streaming but nothing received check timeout
   } else if (lastStreamingFrame!=0 && millis()-lastStreamingFrame>STREAMING_TIMEOUT*1000) {
       if (DEBUG_MODE) {
-        Serial.println(F("Streaming timeout"));
+        DEBUG_PORT.println(F("Streaming timeout"));
       }
       blankFrame();
+      blankPacket();
       lastStreamingFrame=0;
   }
 }
 
-void getSerialData() {
-  if (Serial.available() > 0) {
+int getSerialData() {
 
-    byte x = Serial.read();
-    
-    if (x == startMarker) {
-    
-      serialBytesRecvd = 0;
-      serialInProgress = true;
-    
-    } else if (x == endMarker) {
-      
-      serialInProgress = false;
-      serialAllReceived = true;
-    
-    } else if (serialInProgress) {
-    
-      if (x == specialByte) {
-        unsigned long startTime = millis();
-        while(millis() - startTime < SERIAL_TIMEOUT) { // To decode the highbyte
-          if (Serial.available() > 0) {
-            x += Serial.read();
-            break;
-          }
-        }
+  if ( INPUT_PORT.available() > 0) {
+    unsigned long packetBuildStart;
+
+    int opcode_found = INPUT_PORT.read();
+
+    if (opcode_found <= CHUNKIDMAX && opcode_found >= CHUNKIDMIN) {
+
+      size_t num_read = INPUT_PORT.readBytes(packetBuffer, chunkSize * 3);
+      if (DEBUG_MODE) {
+        DEBUG_PORT.print(F("Bytes read "));DEBUG_PORT.println(num_read);
       }
-      packetBuffer[serialBytesRecvd++] = x;
+      
+    } else if (opcode_found == UPDATEFRAME) {
+
+      //Do nothing
+    
+    } else if (opcode_found == CONFIG) {
+
+      size_t num_read = INPUT_PORT.readBytes(packetBuffer, MAX_NAME_LENGTH + VARIABLES_LENGTH);
+      if (DEBUG_MODE) {
+        DEBUG_PORT.print(F("Bytes read "));DEBUG_PORT.println(num_read);
+      }
+    
+    } else if (opcode_found == POLL) {
+
+      // Do nothing
+    
+    } else if (opcode_found == POLLREPLY) {
+
+      // Nothing to do with the reply so dump it
+      while ( INPUT_PORT.available() > 0 ) {
+        INPUT_PORT.read();
+      }
+    
+    // Unrecognized opcode
+    } else {
+      
+      if (DEBUG_MODE) {
+        DEBUG_PORT.println(F("Unrecognized opcode"));
+      }
+
+      while ( INPUT_PORT.available() > 0 ) {
+        INPUT_PORT.read();
+      }
+      
+      opcode_found = NOPACKET;
     }
+
+    return opcode_found;
+
+  } else {
+    return NOPACKET;
+  }
+}
+
+uint16_t getPacketSize() {
+  return ( max( (chunkSize*3), (MAX_NAME_LENGTH  + VARIABLES_LENGTH) ) );
+}
+
+// Max packet size is the OPCODE + ( RGB[chunksize][3] OR Update size )
+// Update size MAX_NAME_LENGTH + sizeof(PixelsPerStrip, ChunkSize, UdpPort, AmpsLimit, MaPerPixel, WarmUpColor)
+void blankPacket() {
+  uint16_t packetSize = getPacketSize();
+  for (uint16_t i = 0; i < packetSize; i++) {
+    packetBuffer[i] = 0;
   }
 }
 
@@ -218,9 +251,9 @@ HslColor adjustToMaxMilliAmps(HslColor c) {
 void playStreaming(int chunkID) {
   
   if (PACKETDROP_DEBUG_MODE) { // If Debug mode is on print some stuff
-    Serial.println(F("---Incoming---"));
-    Serial.print(F("ChunkID: "));
-    Serial.println(chunkID);
+    DEBUG_PORT.println(F("---Incoming---"));
+    DEBUG_PORT.print(F("ChunkID: "));
+    DEBUG_PORT.println(chunkID);
   }
 
   // Figure out what our starting offset is.
@@ -228,35 +261,36 @@ void playStreaming(int chunkID) {
   const uint16_t initialOffset = chunkSize * chunkID;
   
   if (PACKETDROP_DEBUG_MODE) { // If Debug mode is on print some stuff
-    Serial.print(F("---------: "));
-    Serial.print(chunkSize);
-    Serial.print(F("   "));
-    Serial.println(F(""));
-    Serial.print(F("Init_offset: "));
-    Serial.println(initialOffset);
-    Serial.print(F(" ifLessThan: "));
-    Serial.println((initialOffset + chunkSize));
+    DEBUG_PORT.print(F("---------: "));
+    DEBUG_PORT.print(chunkSize);
+    DEBUG_PORT.print(F("   "));
+    DEBUG_PORT.println(F(""));
+    DEBUG_PORT.print(F("Init_offset: "));
+    DEBUG_PORT.println(initialOffset);
+    DEBUG_PORT.print(F(" ifLessThan: "));
+    DEBUG_PORT.println((initialOffset + chunkSize));
   }
 
   // loop through our recently received packet, and assign the corresponding
   // RGB values to their respective places in the strip.
-  uint16_t led=0;
+  uint16_t index=initialOffset;
   byte r;
   byte g;
   byte b;
-  for (uint16_t i = 1; i < chunkSize*3;) {
+  for (uint32_t i = 0; i < chunkSize*3;) {
 
     r = packetBuffer[i++];
     g = packetBuffer[i++];
     b = packetBuffer[i++];
 
-    strip->SetPixelColor(initialOffset+led++, colorGamma.Correct(RgbColor(r, g, b))); // this line uses gamma correction
-    milliAmpsCounter += (r + g + b); // increment our milliamps counter accordingly for use later.
-  }
-  
+    strip->SetPixelColor(index++, colorGamma.Correct(RgbColor(r, g, b))); // this line uses gamma correction
+    if (index >= pixelsPerStrip) {
+      break;
+    }
+  }  
 
   if (PACKETDROP_DEBUG_MODE) { // If Debug mode is on print some stuff
-    Serial.println(F("Finished For Loop!"));
+    DEBUG_PORT.println(F("Finished For Loop!"));
   }
 
   // if we're debugging packet drops, modify reply buffer.
@@ -265,8 +299,8 @@ void playStreaming(int chunkID) {
   }
 
   if (PACKETDROP_DEBUG_MODE) { // If Debug mode is on print some stuff
-    Serial.println(F("--end of packet and stuff--"));
-    Serial.println(F(""));
+    DEBUG_PORT.println(F("--end of packet and stuff--"));
+    DEBUG_PORT.println(F(""));
   }
 }
 
@@ -317,7 +351,7 @@ bool updateWarmUp(byte v1, byte v2, byte v3) {
 
 void startNeoPixelBus() {
   if (DEBUG_MODE) {
-    Serial.println(F("Starting NeoPixelBus"));
+    DEBUG_PORT.println(F("Starting NeoPixelBus"));
   }
   if (strip) {
     delete strip;
@@ -329,18 +363,20 @@ void startNeoPixelBus() {
 }
 
 void setPacketSize() {
-  if (packetBuffer) free(packetBuffer);
+  if (packetBuffer) {
+    delete packetBuffer;
+  }
   // Max packet size is the OPCODE + ( RGB[chunksize][3] OR Update size )
   // Update size MAX_NAME_LENGTH + sizeof(PixelsPerStrip, ChunkSize, UdpPort, AmpsLimit, MaPerPixel, WarmUpColor)
-  uint16_t packetSize = ( 1 + max( (chunkSize*3), (MAX_NAME_LENGTH  + VARIABLES_LENGTH) ) );
-  packetBuffer = (byte *)malloc(packetSize);//buffer to hold incoming packets
+  uint16_t packetSize = getPacketSize();
+  packetBuffer = (uint8_t *)malloc(packetSize);//buffer to hold incoming packets
 }
 
-void initDisplay() {  
-  milliAmpsCounter = 0;
-  millisMultiplier = 0;
-  InitialColor=RgbColor(InitColor[0],InitColor[1],InitColor[2]); 
-  InitialColor=adjustToMaxMilliAmps(InitialColor);
+void initDisplay() {
+  if (DEBUG_MODE) {
+    DEBUG_PORT.println(F("Initializing display"));
+  }
+  RgbColor InitialColor=adjustToMaxMilliAmps(RgbColor(InitColor[0],InitColor[1],InitColor[2]));
   for(int i=0;i<=90;i++) {
     paintFrame(RgbColor(InitialColor.R*i/90.0,InitialColor.G*i/90.0,InitialColor.B*i/90.0));
     strip->Show();
@@ -348,36 +384,43 @@ void initDisplay() {
   };
 }
 
-// Returns the opcode
-int parseSerialPoll() {
-
-  if (!serialAllReceived) {
-    return NOPACKET;
-  } else {
-    serialAllReceived = false;
-  }
-  
-  return packetBuffer[0];
-}
-
 void serialUpdateFrame() {
 
   if (PACKETDROP_DEBUG_MODE) {
-    Serial.println("Updating Frame");
+    DEBUG_PORT.println("Updating Frame");
   }
-  digitalWrite(LED_BUILTIN, HIGH);
 
   // this math gets our sum total of r/g/b vals down to milliamps (~60mA per pixel)
-  milliAmpsCounter /= 13;
+  uint32_t milliAmpsCounter = 0;
+  uint8_t *pixelBuf = strip->Pixels();
+  uint32_t pixelSize = strip->PixelsSize();
+  double conversion = (mAPerPixel / 3.0) / 255.0;
+  for (uint32_t i = 0; i < pixelSize; i++) {
+    milliAmpsCounter += pixelBuf[i];
+  }
+
+  if (PACKETDROP_DEBUG_MODE) {
+    DEBUG_PORT.print(F("Raw rgb values for mA limiter: "));DEBUG_PORT.println(milliAmpsCounter);
+    DEBUG_PORT.print(F("Conversion: "));DEBUG_PORT.println(conversion);
+    DEBUG_PORT.print(F("PixelSize: "));DEBUG_PORT.println(pixelSize);
+  }
+
+  milliAmpsCounter = floor((float)milliAmpsCounter * conversion);
+
+  if (PACKETDROP_DEBUG_MODE) {
+    DEBUG_PORT.print(F("Converted mA value: "));DEBUG_PORT.println(milliAmpsCounter);
+  }
   
   // because the Darken function uses a value from 0-255 this next line maths it into the right range and type.
-  millisMultiplier = 255 - (byte)( constrain( ((float)milliAmpsLimit / (float)milliAmpsCounter), 0, 1 ) * 256);
-  millisMultiplier = map(millisMultiplier, 0, 255, 255, 0); // inverse the multiplier to work with new brightness control method
+  byte millisMultiplier = (byte)( constrain( ((float)milliAmpsLimit / (float)milliAmpsCounter), 0, 1 ) * 255);
+  //millisMultiplier = map(millisMultiplier, 0, 255, 255, 0); // inverse the multiplier to work with new brightness control method
+  // Collect data  MDB
+  //framesMD[frameIndex].adjustedPower=millisMultiplier;
 
   if (PACKETDROP_DEBUG_MODE) { // If Debug mode is on print some stuff
-    Serial.println(F("Trying to update leds..."));
-    Serial.print(F("Dimming leds to: "));
-    Serial.println( millisMultiplier );
+    DEBUG_PORT.println(F("Trying to update leds..."));
+    DEBUG_PORT.print(F("Dimming leds to: "));
+    DEBUG_PORT.println( millisMultiplier );
   }
 
   // We already applied our r/g/b values to the strip, but we haven't updated it yet.
@@ -388,11 +431,11 @@ void serialUpdateFrame() {
     strip->SetBrightness(millisMultiplier); // this new brightness control method was added to lib recently, affects entire strip at once.
   }
   strip->Show();   // write all the pixels out
+  strip->SetBrightness(255);
   lastStreamingFrame=millis();
-  milliAmpsCounter = 0; // reset the milliAmpsCounter for the next frame.
 
   if (PACKETDROP_DEBUG_MODE) { // If Debug mode is on print some stuff
-    Serial.println(F("Finished updating Leds!"));
+    DEBUG_PORT.println(F("Finished updating Leds!"));
   }
 
   // if we're debugging packet drops, modify reply buffer.
@@ -404,18 +447,15 @@ void serialUpdateFrame() {
 
     // clear the response buffer string.
     for (byte i = 0; i < sizeof(ReplyBuffer); i++) {
-      Serial.write(ReplyBuffer[i]);
+      INPUT_PORT.write(ReplyBuffer[i]);
       ReplyBuffer[i] = 0;
     }
-    Serial.println();
   }
 
-  digitalWrite(LED_BUILTIN, LOW);
 }
 
 void serialConfigDevice() {
-  // Set packetbuffer index past the OpCode byte
-  int i = 1;
+  int i = 0;
   // Get the device name and save it to a buffer
   char nameBuf[MAX_NAME_LENGTH];
   for (int j = 0; j < MAX_NAME_LENGTH; j++) {
@@ -509,12 +549,12 @@ void serialSendPollReply() {
   ReplyBuffer[i++] = InitColor[1];
   ReplyBuffer[i++] = InitColor[2];
   if (PACKETDROP_DEBUG_MODE) {
-    Serial.println(F("Replying..."));
+    DEBUG_PORT.println(F("Replying..."));
   }
 
-  Serial.write(ReplyBuffer, sizeof(ReplyBuffer));
+  INPUT_PORT.write(ReplyBuffer, sizeof(ReplyBuffer));
 
   if (PACKETDROP_DEBUG_MODE) {
-    Serial.println(F("EndReplyBuffer"));
+    DEBUG_PORT.println(F("EndReplyBuffer"));
   }
 }
