@@ -1035,15 +1035,16 @@ void playStreaming(int chunkID) {
   // loop through our recently received packet, and assign the corresponding
   // RGB values to their respective places in the strip.
   //if(action<=MAX_ACTION_BYTE) { //check the ation byte is within limits
-  uint16_t led=0;
+  uint16_t led=initialOffset;
   for (uint16_t i = IDLENGTH + 1; i < (IDLENGTH + chunkSize*3);) {
 
     r = packetBuffer[i++];
     g = packetBuffer[i++];
     b = packetBuffer[i++];
 
-    strip->SetPixelColor(initialOffset+led++, colorGamma.Correct(RgbColor(r, g, b))); // this line uses gamma correction
-    //milliAmpsCounter += (r + g + b); // increment our milliamps counter accordingly for use later.
+    if (led < pixelsPerStrip) {
+      strip->SetPixelColor(led++, colorGamma.Correct(RgbColor(r, g, b))); // this line uses gamma correction
+    }
   }
   
 
